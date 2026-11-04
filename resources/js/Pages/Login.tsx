@@ -1,16 +1,10 @@
 import { Head, useForm } from '@inertiajs/react';
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { route } from 'ziggy-js';
-import { Activity, ArrowRight, Eye, EyeOff, LoaderCircle, LockKeyhole, Mail, Radio, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, LoaderCircle, LockKeyhole, Mail, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-
-const features = [
-    { icon: Activity, title: 'Stay informed', description: 'Review incidents and important community updates.' },
-    { icon: Radio, title: 'Coordinate a response', description: 'Connect reports, response teams, and field operations.' },
-    { icon: ShieldCheck, title: 'Serve your community', description: 'Keep the right information within reach when it matters.' },
-];
 
 export default function Login() {
     const form = useForm({ email: '', password: '' });
@@ -45,7 +39,6 @@ export default function Login() {
             <div className="mx-auto grid w-full max-w-6xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-900/5 lg:min-h-[700px] lg:grid-cols-[1fr_1fr]">
                 <aside aria-label="About MDRRMO" className="relative hidden flex-col overflow-hidden bg-slate-950 p-10 text-white lg:flex xl:p-12">
                     <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(37,99,235,0.28),transparent_65%)]" />
-                    <div aria-hidden="true" className="pointer-events-none absolute -bottom-48 -left-32 size-[500px] rounded-full border border-white/5 p-16"><div className="size-full rounded-full border border-white/5 p-16"><div className="size-full rounded-full border border-white/5" /></div></div>
 
                     <div className="relative flex items-center gap-3">
                         <div className="grid size-14 shrink-0 place-items-center rounded-2xl bg-white p-1.5"><img src="/mdrrmo-logo.webp" alt="MDRRMO logo" width={44} height={44} className="size-11 object-contain" /></div>
@@ -57,14 +50,6 @@ export default function Login() {
                         <h2 className="max-w-sm text-4xl font-semibold leading-[1.2] tracking-tight xl:text-[44px]">Together for a safer community.</h2>
                         <p className="mt-5 max-w-sm text-sm leading-7 text-slate-300">One place to manage emergency information and support the people who depend on your response.</p>
 
-                        <ul className="mt-9 space-y-5">
-                            {features.map(({ icon: Icon, title, description }) => (
-                                <li key={title} className="flex items-start gap-3">
-                                    <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/5 text-blue-300"><Icon className="size-[18px]" aria-hidden="true" /></span>
-                                    <div><p className="text-sm font-medium">{title}</p><p className="mt-1 text-xs leading-5 text-slate-400">{description}</p></div>
-                                </li>
-                            ))}
-                        </ul>
                     </div>
 
                     <p className="relative max-w-xs text-xs leading-5 text-slate-400">Municipal Disaster Risk Reduction and Management Office</p>
