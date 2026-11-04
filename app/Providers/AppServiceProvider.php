@@ -12,6 +12,8 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
+use Illuminate\Support\Facades\URL;
+
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -28,6 +30,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+		if (app()->environment('production')) {
+			URL::forceScheme('https');
+		}
         Auth::provider('role-users', fn ($app, array $config) => new RoleUserProvider($app['hash']));
         EmergencyReport::observe(AutomaticDispatchObserver::class);
         Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
