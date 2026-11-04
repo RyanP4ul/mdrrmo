@@ -1,17 +1,19 @@
 import { Head, Link, router } from '@inertiajs/react';
+import { route } from 'ziggy-js';
 import { ArrowLeft, FileText } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
-import { PageHeader } from '@/Components/PageHeader';
-import { StatusBadge } from '@/Components/StatusBadge';
-import { LocationMap } from '@/Components/maps/LocationMap';
-import { Button } from '@/Components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/Components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/Components/ui/select';
+import { PageHeader } from '@/components/PageHeader';
+import { StatusBadge } from '@/components/StatusBadge';
+import { LocationMap } from '@/components/maps/LocationMap';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { formatDateTime } from '@/lib/utils';
+import type { EmergencyReport } from '@/types/website';
 
 const Row = ({ k, v }: { k: string; v?: string | null }) => v ? <div className="flex justify-between gap-4 text-sm"><dt className="text-muted-foreground">{k}</dt><dd className="text-right font-medium">{v}</dd></div> : null;
 
-export default function Show({ report: r }: { report: any }) {
+export default function Show({ report: r }: { report: EmergencyReport }) {
   const upd = (patch: Record<string, string>) => router.patch(route('admin.reports.update', r.id), { status: r.status, priority: r.priority, ...patch }, { preserveScroll: true });
   const f = r.form;
   return (

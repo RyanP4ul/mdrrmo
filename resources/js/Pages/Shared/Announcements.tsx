@@ -1,19 +1,20 @@
 import { Head } from '@inertiajs/react';
 import { Calendar, ImageIcon, Megaphone, User } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
-import { PageHeader } from '@/Components/PageHeader';
-import { FilterBar, FilterSelect } from '@/Components/FilterBar';
-import { EmptyState } from '@/Components/EmptyState';
-import { ServerPagination } from '@/Components/ServerPagination';
-import { Badge } from '@/Components/ui/badge';
-import { Card, CardContent } from '@/Components/ui/card';
+import { PageHeader } from '@/components/PageHeader';
+import { FilterBar, FilterSelect } from '@/components/FilterBar';
+import { EmptyState } from '@/components/EmptyState';
+import { ServerPagination } from '@/components/ServerPagination';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { useServerFilters } from '@/hooks/useServerFilters';
 import { formatDateTime } from '@/lib/utils';
 import type { Paginated } from '@/types';
+import type { AnnouncementFeedItem } from '@/types/website';
 
 const tone: Record<string, string> = { 'Weather Advisory': 'bg-sky-100 text-sky-800', Evacuation: 'bg-red-100 text-red-800', 'Traffic Advisory': 'bg-amber-100 text-amber-800', Information: 'bg-emerald-100 text-emerald-800', 'Relief Operations': 'bg-violet-100 text-violet-800' };
 
-export default function Announcements({ announcements, categories, filters }: { announcements: Paginated<any>; categories: string[]; filters: Record<string, string> }) {
+export default function Announcements({ announcements, categories, filters }: { announcements: Paginated<AnnouncementFeedItem>; categories: string[]; filters: Record<string, string> }) {
   const { values, set } = useServerFilters({ search: filters.search ?? '', category: filters.category ?? '' }, ['announcements']);
   return (
     <AppLayout>

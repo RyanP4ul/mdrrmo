@@ -1,16 +1,17 @@
 import { Head } from '@inertiajs/react';
 import { ClipboardList } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
-import { PageHeader } from '@/Components/PageHeader';
-import { EmptyState } from '@/Components/EmptyState';
-import { StatusBadge } from '@/Components/StatusBadge';
-import { ServerPagination } from '@/Components/ServerPagination';
-import { Card, CardContent } from '@/Components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/Components/ui/table';
+import { PageHeader } from '@/components/PageHeader';
+import { EmptyState } from '@/components/EmptyState';
+import { StatusBadge } from '@/components/StatusBadge';
+import { ServerPagination } from '@/components/ServerPagination';
+import { Card, CardContent } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDateTime } from '@/lib/utils';
 import type { Paginated } from '@/types';
+import type { EmergencyReport } from '@/types/website';
 
-export default function Assignments({ reports }: { reports: Paginated<any> }) {
+export default function Assignments({ reports }: { reports: Paginated<EmergencyReport> }) {
   return (
     <AppLayout>
       <Head title="Assignments" />

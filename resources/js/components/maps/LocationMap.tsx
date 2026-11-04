@@ -1,5 +1,5 @@
 import { Hospital } from 'lucide-react';
-import { Map, MapControls, MapMarker, MapRoute, MarkerContent, MarkerLabel, MarkerPopup, MarkerTooltip } from '@/Components/ui/map';
+import { Map, MapControls, MapMarker, MapRoute, MarkerContent, MarkerLabel, MarkerPopup, MarkerTooltip } from '@/components/ui/map';
 
 interface Hosp { id: number; name: string; lat: number; lng: number; distance: number; eta: number }
 

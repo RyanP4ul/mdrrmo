@@ -3,12 +3,13 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
   Activity, AlertTriangle, Bell, CalendarDays, ClipboardList, FileText, History, LayoutDashboard, Map as MapIcon,
-  Megaphone, Menu, Navigation, Radio, Shield, Siren, Users, type LucideIcon,
+  ChevronRight, LogOut, Megaphone, Menu, Navigation, Radio, Shield, Siren, Users, type LucideIcon,
 } from 'lucide-react';
-import { Sheet, SheetContent, SheetTitle } from '@/Components/ui/sheet';
-import { Button } from '@/Components/ui/button';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { PageProps, Role } from '@/types';
+import { VoiceCalls } from '@/components/VoiceCalls';
 
 type Item = { label: string; href: string; icon: LucideIcon; exact?: boolean };
 
@@ -46,17 +47,23 @@ const NAV: Record<Role, Item[]> = {
   ],
 };
 
-function NavList({ items, url, onNavigate }: { items: Item[]; url: string; onNavigate?: () => void }) {
+function NavList({ items, url, onNavigate, staff = false }: { items: Item[]; url: string; onNavigate?: () => void; staff?: boolean }) {
   return (
-    <nav className="flex-1 space-y-1 p-3" aria-label="Main">
-      {items.map(({ label, href, icon: Icon, exact }) => {
+    <nav className="flex-1 space-y-1 overflow-y-auto p-4" aria-label="Main">
+      {staff && <p className="px-3 pb-3 pt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Workspace</p>}
+      {items.map(({ label, href, icon: Icon, exact }, index) => {
         const active = exact ? url === href || url.startsWith(href + '?') : url.startsWith(href);
         return (
-          <Link key={href} href={href} onClick={onNavigate} aria-current={active ? 'page' : undefined}
-            className={cn('flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-              active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
-            <Icon className="size-4" /> {label}
-          </Link>
+          <div key={href}>
+            {staff && index === 3 && <p className="mb-3 mt-7 px-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">{href.startsWith('/admin') ? 'Management' : 'Coordination'}</p>}
+            <Link href={href} onClick={onNavigate} aria-current={active ? 'page' : undefined}
+              className={cn('flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400',
+                staff ? active ? 'bg-blue-500/15 text-blue-200 ring-1 ring-blue-400/25' : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                  : active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
+              <Icon className="size-[18px] shrink-0" /> <span className="flex-1">{label}</span>
+              {active && <ChevronRight className="size-3.5" />}
+            </Link>
+          </div>
         );
       })}
     </nav>
@@ -68,6 +75,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const { url } = usePage();
   const [open, setOpen] = useState(false);
   const items = NAV[auth.user.role];
+  const staff = auth.user.role === 'admin' || auth.user.role === 'dispatcher';
+  const currentPage = items.find((item) => item.exact ? url.split('?')[0] === item.href : url.startsWith(item.href));
+  const initials = auth.user.full_name.split(' ').filter(Boolean).slice(0, 2).map((name) => name[0]).join('');
 
   useEffect(() => {
     if (flash?.success) toast.success(flash.success);
@@ -75,34 +85,44 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }, [flash]);
 
   const brand = (
-    <div className="flex h-16 items-center gap-2 border-b px-5">
-      <div className="grid size-9 place-items-center rounded-lg bg-primary text-primary-foreground"><Siren className="size-5" /></div>
-      <div className="leading-tight"><p className="text-sm font-semibold">MDRRMO</p><p className="text-xs capitalize text-muted-foreground">{auth.user.role.replace('/', ' / ')}</p></div>
+    <div className={cn('flex h-20 shrink-0 items-center gap-3 border-b px-6', staff && 'border-white/10')}>
+      <div className={cn('grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground', staff && 'bg-blue-500 text-white')}><Siren className="size-5" /></div>
+      <div className="leading-tight"><p className="text-base font-bold tracking-wide">MDRRMO</p><p className={cn('mt-1 text-xs capitalize text-muted-foreground', staff && 'text-slate-400')}>{staff ? 'Emergency management' : auth.user.role.replace('/', ' / ')}</p></div>
     </div>
   );
   const footer = (
-    <div className="border-t p-4 text-sm">
-      <p className="truncate font-medium">{auth.user.full_name}</p>
-      <Link href="/logout" method="post" as="button" className="text-xs text-muted-foreground hover:text-foreground">Sign out</Link>
+    <div className={cn('shrink-0 border-t p-4 text-sm', staff && 'border-white/10')}>
+      <div className="mb-3 flex items-center gap-3 px-2">
+        <span className={cn('grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary', staff && 'bg-slate-700 text-slate-100')}>{initials}</span>
+        <div className="min-w-0"><p className="truncate font-medium">{auth.user.full_name}</p><p className={cn('text-xs capitalize text-muted-foreground', staff && 'text-slate-400')}>{auth.user.role.replace('/', ' / ')}</p></div>
+      </div>
+      <Link href="/logout" method="post" as="button" className={cn('flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground', staff && 'text-slate-400 hover:bg-white/5 hover:text-white')}><LogOut className="size-4" />Sign out</Link>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-muted/30 lg:grid lg:grid-cols-[17rem_1fr]">
-      <aside className="sticky top-0 hidden h-screen flex-col border-r bg-background lg:flex">{brand}<NavList items={items} url={url} />{footer}</aside>
+    <VoiceCalls user={auth.user}><div className={cn('min-h-screen bg-muted/30 lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]', staff && 'staff-workspace')}>
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-background focus:p-3">Skip to content</a>
+      <aside className={cn('sticky top-0 hidden h-screen flex-col border-r bg-background lg:flex', staff && 'border-slate-800 bg-slate-950 text-white')}>{brand}<NavList items={items} url={url} staff={staff} />{footer}</aside>
 
-      <div className="flex h-14 items-center gap-2 border-b bg-background px-3 lg:hidden">
+      <div className="min-w-0">
+      <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur sm:px-8">
+        <div className="lg:hidden">
         <Button variant="ghost" size="icon" aria-label="Open menu" onClick={() => setOpen(true)}><Menu className="size-5" /></Button>
-        <span className="text-sm font-semibold">MDRRMO</span>
-      </div>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center gap-2 text-sm"><span className="hidden text-muted-foreground sm:inline">{auth.user.role === 'admin' ? 'Administration' : auth.user.role === 'dispatcher' ? 'Dispatch workspace' : 'MDRRMO'}</span><ChevronRight className="hidden size-3.5 text-muted-foreground sm:block" /><span className="truncate font-medium">{currentPage?.label ?? 'Workspace'}</span></div>
+        <span className="hidden text-xs text-muted-foreground md:block">{auth.user.full_name}</span>
+        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary" aria-hidden="true">{initials}</span>
+      </header>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="left" className="flex w-72 flex-col p-0">
-          <SheetTitle className="sr-only">Navigation</SheetTitle>{brand}<NavList items={items} url={url} onNavigate={() => setOpen(false)} />{footer}
+        <SheetContent side="left" className={cn('flex w-72 flex-col p-0', staff && 'border-slate-800 bg-slate-950 text-white [&>button]:text-white')}>
+          <SheetTitle className="sr-only">Navigation</SheetTitle>{brand}<NavList items={items} url={url} staff={staff} onNavigate={() => setOpen(false)} />{footer}
         </SheetContent>
       </Sheet>
 
-      <main className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">{children}</main>
+      <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1440px] space-y-6 p-4 outline-none sm:p-6 xl:p-8">{children}</main>
+      </div>
       <Toaster richColors position="top-right" />
-    </div>
+    </div></VoiceCalls>
   );
 }

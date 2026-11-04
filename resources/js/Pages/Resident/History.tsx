@@ -1,15 +1,16 @@
 import { Head } from '@inertiajs/react';
 import { History as HistoryIcon, MapPin } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
-import { PageHeader } from '@/Components/PageHeader';
-import { EmptyState } from '@/Components/EmptyState';
-import { StatusBadge } from '@/Components/StatusBadge';
-import { ServerPagination } from '@/Components/ServerPagination';
-import { Card, CardContent } from '@/Components/ui/card';
+import { PageHeader } from '@/components/PageHeader';
+import { EmptyState } from '@/components/EmptyState';
+import { StatusBadge } from '@/components/StatusBadge';
+import { ServerPagination } from '@/components/ServerPagination';
+import { Card, CardContent } from '@/components/ui/card';
 import { formatDateTime } from '@/lib/utils';
 import type { Paginated } from '@/types';
+import type { EmergencyReport } from '@/types/website';
 
-export default function History({ reports }: { reports: Paginated<any> }) {
+export default function History({ reports }: { reports: Paginated<EmergencyReport> }) {
   return (
     <AppLayout>
       <Head title="My Reports" />

@@ -15,9 +15,10 @@ import {
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
 import { usePage } from "@inertiajs/react";
+import type { PageProps } from "@/types";
 
 export function AppHeader() {
-    const { auth } = usePage().props;
+    const { auth } = usePage<PageProps>().props;
     const title = "MDRRMO";
     const isResident = false;
     const notificationCount = isResident ? 2 : 3;

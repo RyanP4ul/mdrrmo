@@ -3,14 +3,23 @@
 namespace App\Http\Controllers;
 
 use App\Events\VehicleLocationUpdated;
+use App\Models\DispatchTrip;
+use App\Models\DriverNotification;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
 use App\Models\ResponseTeam;
 use App\Models\Vehicle;
+use App\Services\DriverResponseProgress;
+use App\Services\EmergencyReportWorkflow;
+use App\Support\MobilePage;
+use App\Support\MobileValidation;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -20,19 +29,21 @@ class MobileDriverApiController extends Controller
     {
         /** @var DriverResponderUser $driver */
         $driver = $request->user();
-        $vehicle = $this->vehicleFor($driver);
+
+        $assignments = $this->activeReports($driver)->get();
+        $assignment = $assignments->first();
 
         return response()->json([
+            'unread_count' => DriverNotification::where('driver_id', $driver->id)->whereNull('read_at')->count(),
+            'assignments' => $assignments->map(fn ($report) => $this->reportData($report)),
             'profile' => [
                 'name' => $driver->full_name,
                 'contact' => $driver->contact_number ?? '',
-                'vehicle_type' => $vehicle?->vehicle_type,
-                'vehicle_number' => $vehicle?->plate_number,
-                'vehicle_status' => $vehicle?->status ?? 'offline',
+                'vehicle_status' => 'available',
             ],
             'teams' => $this->teamMembers($driver),
-            'assignment' => $this->activeReports($driver)->first()
-                ? $this->reportData($this->activeReports($driver)->first(), $vehicle)
+            'assignment' => $assignment
+                ? $this->reportData($assignment)
                 : null,
             'incident_types' => IncidentType::query()
                 ->orderBy('name')
@@ -60,75 +71,44 @@ class MobileDriverApiController extends Controller
         $driver = $request->user();
         $vehicle = $this->vehicleFor($driver);
 
-        return response()->json([
-            'data' => EmergencyReport::query()
-                ->where('assigned_driver_id', $driver->getKey())
-                ->whereIn('status', ['resolved', 'invalid'])
-                ->with(['incidentType:id,name,color', 'team.vehicles', 'driver:id,first_name,last_name'])
-                ->latest('reported_at')
-                ->limit(100)
-                ->get()
-                ->map(fn (EmergencyReport $report): array => $this->reportData($report, $vehicle)),
-        ]);
+        return response()->json(MobilePage::make(EmergencyReport::query()
+            ->where('assigned_driver_id', $driver->getKey())->whereIn('status', ['resolved', 'invalid'])
+            ->with(['incidentType:id,name,color', 'team.vehicles', 'driver:id,first_name,last_name']),
+            fn (EmergencyReport $report): array => $this->reportData($report, $vehicle), $request));
     }
 
-    public function updateStatus(Request $request, EmergencyReport $report): JsonResponse
+    public function updateStatus(Request $request, EmergencyReport $report, EmergencyReportWorkflow $workflow): JsonResponse
     {
-        /** @var DriverResponderUser $driver */
         $driver = $request->user();
         abort_unless($report->assigned_driver_id === $driver->getKey(), 404);
+        $request->merge(['response_status' => $request->input('response_status', $request->input('vehicle_status'))]);
+        $data = $request->validate(['response_status' => ['required', 'in:en-route,on-scene,available']]);
+        $updated = app(DriverResponseProgress::class)->advance($driver, $report, $data['response_status']);
 
-        $data = $request->validate([
-            'vehicle_status' => ['required', 'in:en-route,on-scene,available'],
-        ]);
-        $vehicle = Vehicle::query()
-            ->where('response_team_id', $report->response_team_id)
-            ->firstOrFail();
-
-        $nextStatus = $data['vehicle_status'];
-        $validTransition = match ($nextStatus) {
-            'en-route' => in_array($vehicle->status, ['available', 'offline'], true)
-                && in_array($report->status, ['acknowledged', 'dispatched'], true),
-            'on-scene' => $vehicle->status === 'en-route'
-                && in_array($report->status, ['acknowledged', 'dispatched'], true),
-            'available' => $vehicle->status === 'on-scene'
-                && in_array($report->status, ['acknowledged', 'dispatched'], true),
-        };
-        abort_unless($validTransition, 422, 'The assignment cannot move to that status yet.');
-
-        DB::transaction(function () use ($nextStatus, $report, $vehicle): void {
-            $vehicle->update([
-                'status' => $nextStatus,
-                'assigned_report_id' => $nextStatus === 'available' ? null : $report->getKey(),
-            ]);
-
-            if ($nextStatus === 'available') {
-                $report->update(['status' => 'resolved', 'resolved_at' => now()]);
-            }
-        });
-
-        event(new VehicleLocationUpdated($vehicle->refresh()));
-
-        return response()->json([
-            'assignment' => $nextStatus === 'available'
-                ? null
-                : $this->reportData($report->refresh()->load(['incidentType', 'team.vehicles', 'driver']), $vehicle),
-        ]);
+        return response()->json(['assignment' => $updated->status === 'resolved' ? null : $this->reportData($updated)]);
     }
 
     public function updateAvailability(Request $request): JsonResponse
     {
         /** @var DriverResponderUser $driver */
         $driver = $request->user();
+        $request->validate(['vehicle_id' => ['nullable', 'integer', 'min:1']]);
         $status = $request->validate([
             'vehicle_status' => ['required', 'in:available,offline'],
         ])['vehicle_status'];
 
-        abort_if($this->activeReports($driver)->exists(), 422, 'Complete your active assignment before changing availability.');
-        $vehicle = $this->vehicleFor($driver);
-        abort_unless($vehicle, 404, 'No vehicle is assigned to your team.');
+        $vehicle = DB::transaction(function () use ($driver, $status, $request): Vehicle {
+            DriverResponderUser::query()->whereKey($driver->getKey())->lockForUpdate()->firstOrFail();
+            abort_if($this->activeReports($driver)->exists(), 422, 'Complete your active assignment before changing availability.');
+            $selected = $this->vehicleFor($driver, $request->integer('vehicle_id') ?: null, true);
+            abort_unless($selected, 404, 'No vehicle is assigned to your team.');
+            $vehicle = Vehicle::query()->whereKey($selected->getKey())->lockForUpdate()->firstOrFail();
+            Gate::authorize('update', $vehicle);
+            abort_if($vehicle->assigned_report_id !== null || ! in_array($vehicle->status, ['available', 'offline'], true), 422, 'This vehicle is assigned to an active incident.');
+            $vehicle->update(['status' => $status]);
 
-        $vehicle->update(['status' => $status, 'assigned_report_id' => null]);
+            return $vehicle;
+        });
         event(new VehicleLocationUpdated($vehicle->refresh()));
 
         return response()->json(['vehicle_status' => $vehicle->status]);
@@ -136,43 +116,13 @@ class MobileDriverApiController extends Controller
 
     public function updateProfile(Request $request): JsonResponse
     {
-        /** @var DriverResponderUser $driver */
+        MobileValidation::normalizePhone($request, 'contact');
+        $data = $request->validate(['name' => ['required', 'string', 'max:120'], 'contact' => MobileValidation::phoneRules(), 'vehicle_id' => ['prohibited'], 'vehicle_type' => ['prohibited'], 'vehicle_number' => ['prohibited']]);
+        $parts = MobileValidation::nameParts($data['name']);
         $driver = $request->user();
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:120'],
-            'contact' => ['required', 'string', 'max:20'],
-            'vehicle_type' => ['required', 'in:ambulance,fire-truck,rescue-van,police-car,utility-truck'],
-            'vehicle_number' => ['required', 'string', 'max:255'],
-        ]);
+        $driver->update(['first_name' => $parts[0], 'last_name' => $parts[1] ?? '', 'contact_number' => $data['contact']]);
 
-        $nameParts = preg_split('/\s+/', trim($data['name']), 2);
-        if ($nameParts === false || $nameParts[0] === '') {
-            throw ValidationException::withMessages(['name' => 'Enter a valid name.']);
-        }
-
-        $vehicle = $this->vehicleFor($driver);
-        abort_unless($vehicle, 404, 'No vehicle is assigned to your team.');
-
-        $driver->update([
-            'first_name' => $nameParts[0],
-            'last_name' => $nameParts[1] ?? '',
-            'contact_number' => $data['contact'],
-        ]);
-
-        $vehicle->update([
-            'vehicle_type' => $data['vehicle_type'],
-            'plate_number' => $data['vehicle_number'],
-        ]);
-
-        return response()->json([
-            'profile' => [
-                'name' => $driver->fresh()->full_name,
-                'contact' => $driver->contact_number,
-                'vehicle_type' => $vehicle?->vehicle_type,
-                'vehicle_number' => $vehicle?->plate_number,
-                'vehicle_status' => $vehicle?->status ?? 'offline',
-            ],
-        ]);
+        return response()->json(['profile' => ['name' => $driver->fresh()->full_name, 'contact' => $driver->contact_number, 'vehicle_status' => 'available']]);
     }
 
     public function incidentTypes(): JsonResponse
@@ -186,6 +136,7 @@ class MobileDriverApiController extends Controller
     {
         /** @var DriverResponderUser $driver */
         $driver = $request->user();
+        MobileValidation::normalizePhone($request, 'contact_number');
         $data = $request->validate([
             'incident_type_id' => ['required', 'integer', 'exists:incident_types,id'],
             'location' => ['required', 'string', 'max:255'],
@@ -196,7 +147,7 @@ class MobileDriverApiController extends Controller
             'patient_age' => ['required', 'integer', 'between:0,120'],
             'symptoms' => ['required', 'string', 'max:2000'],
             'contact_person' => ['required', 'string', 'max:255'],
-            'contact_number' => ['required', 'string', 'max:20'],
+            'contact_number' => MobileValidation::phoneRules(),
         ]);
 
         $incidentType = IncidentType::query()->findOrFail($data['incident_type_id']);
@@ -224,15 +175,16 @@ class MobileDriverApiController extends Controller
                 'contact_number' => $data['contact_number'],
             ],
         ]);
+        DriverNotification::receipt($driver->id, $report, 'submitted', 'Report received');
         $report->load('incidentType:id,name,color');
 
         return response()->json(['report' => $this->reportData($report)], 201);
     }
 
     /**
-     * @return \Illuminate\Database\Eloquent\Builder<EmergencyReport>
+     * @return Builder<EmergencyReport>
      */
-    private function activeReports(DriverResponderUser $driver)
+    private function activeReports(DriverResponderUser $driver): Builder
     {
         return EmergencyReport::query()
             ->where('assigned_driver_id', $driver->getKey())
@@ -241,12 +193,30 @@ class MobileDriverApiController extends Controller
             ->latest('reported_at');
     }
 
-    private function vehicleFor(DriverResponderUser $driver): ?Vehicle
+    private function editableVehicles(DriverResponderUser $driver)
     {
-        return Vehicle::query()
-            ->whereHas('team.members', fn ($query) => $query->where('user_id', $driver->getKey()))
-            ->with('team.members')
-            ->first();
+        return Vehicle::query()->whereHas('team.members', fn ($query) => $query->where('user_id', $driver->getKey()))
+            ->with(['team', 'report'])->orderBy('id')->get()->filter(fn (Vehicle $vehicle): bool => Gate::forUser($driver)->allows('update', $vehicle))->values();
+    }
+
+    private function vehicleFor(DriverResponderUser $driver, ?int $id = null, bool $requireChoice = false): ?Vehicle
+    {
+        $vehicles = $this->editableVehicles($driver);
+        if ($id !== null) {
+            $vehicle = $vehicles->firstWhere('id', $id);
+            abort_unless($vehicle, 404, 'This vehicle is not available to your account.');
+
+            return $vehicle;
+        }
+        $assigned = $vehicles->first(fn (Vehicle $vehicle): bool => $vehicle->assigned_report_id !== null);
+        if ($assigned) {
+            return $assigned;
+        }
+        if ($requireChoice && $vehicles->count() > 1) {
+            throw ValidationException::withMessages(['vehicle_id' => 'Choose the vehicle you are using.']);
+        }
+
+        return $vehicles->count() === 1 ? $vehicles->first() : null;
     }
 
     /**
@@ -256,12 +226,14 @@ class MobileDriverApiController extends Controller
     {
         return ResponseTeam::query()
             ->whereHas('members', fn ($query) => $query->where('user_id', $driver->getKey()))
-            ->with('members')
+            ->with('members.user')
             ->get()
             ->flatMap(fn (ResponseTeam $team) => $team->members->map(fn ($member): array => [
-                'name' => $member->name,
+                'name' => $member->user?->full_name ?? $member->name,
+                'contact' => $member->user?->contact_number,
+                'last_seen_at' => $member->user?->last_seen_at,
                 'role' => $member->role ?? 'Team member',
-                'online' => $team->status === 'active' && $member->status === 'active',
+                'online' => $member->user?->status === 'active' && $member->user?->last_seen_at && Carbon::parse($member->user->last_seen_at)->greaterThan(now()->subSeconds(90)),
             ]))
             ->values()
             ->all();
@@ -274,6 +246,7 @@ class MobileDriverApiController extends Controller
     {
         $report->loadMissing(['incidentType', 'team.vehicles', 'driver']);
         $teamVehicle = $report->team?->vehicles->firstWhere('assigned_report_id', $report->getKey());
+        $trip = DispatchTrip::where('emergency_report_id', $report->id)->first();
 
         return [
             'id' => $report->getKey(),
@@ -287,7 +260,10 @@ class MobileDriverApiController extends Controller
             'reported_at' => $report->reported_at?->toIso8601String(),
             'resolved_at' => $report->resolved_at?->toIso8601String(),
             'driver' => $report->driver?->full_name,
-            'vehicle' => $teamVehicle?->plate_number ?? $vehicle?->plate_number,
+            'trip' => $trip,
+            'response_status' => $trip?->on_scene_at ? 'on-scene' : ($trip?->started_at ? 'en-route' : 'available'),
+            'vehicle_id' => $teamVehicle?->id,
+            'vehicle' => $teamVehicle?->plate_number ?? DispatchTrip::where('emergency_report_id', $report->id)->value('vehicle_number') ?? $vehicle?->plate_number,
             'vehicle_status' => $teamVehicle?->status ?? $vehicle?->status,
         ];
     }

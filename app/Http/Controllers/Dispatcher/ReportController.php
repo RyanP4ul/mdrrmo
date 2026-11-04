@@ -3,9 +3,13 @@
 namespace App\Http\Controllers\Dispatcher;
 
 use App\Http\Controllers\Controller;
-use App\Models\{EmergencyReport, IncidentType, ResponseTeam};
+use App\Models\EmergencyReport;
+use App\Models\IncidentType;
+use App\Models\ResponseTeam;
 use App\Services\DispatchService;
+use App\Services\EmergencyReportWorkflow;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 
 class ReportController extends Controller
@@ -25,6 +29,7 @@ class ReportController extends Controller
     /** History: resolved / invalid only */
     public function index(Request $request)
     {
+        Gate::authorize('viewAny', EmergencyReport::class);
         $f = $request->only('search', 'type', 'priority');
 
         return Inertia::render('Dispatcher/Reports/Index', [
@@ -37,6 +42,7 @@ class ReportController extends Controller
 
     public function show(EmergencyReport $report)
     {
+        Gate::authorize('view', $report);
         $report->load(['incidentType', 'team.members', 'driver:id,first_name,last_name']);
         $team = $report->team ?? $this->dispatcher->autoAssignTeam();
 
@@ -51,26 +57,26 @@ class ReportController extends Controller
 
     public function assign(Request $request, EmergencyReport $report)
     {
+        Gate::authorize('dispatch', $report);
         $teamId = $request->validate(['team_id' => ['nullable', 'exists:response_teams,id']])['team_id'] ?? null;
         $this->dispatcher->dispatch($report, $teamId ? ResponseTeam::find($teamId) : null);
 
         return back()->with('success', 'Response team dispatched.');
     }
 
-    public function acknowledge(EmergencyReport $report)
+    public function acknowledge(Request $request, EmergencyReport $report, EmergencyReportWorkflow $workflow)
     {
-        $report->update([
-            'status' => 'acknowledged',
-            'acknowledged_by' => auth()->user()->getKey(),
-            'acknowledged_by_type' => auth()->user()->getMorphClass(),
-            'acknowledged_at' => now(),
-        ]);
+        Gate::authorize('acknowledge', $report);
+        $workflow->transition($report, 'acknowledged', $request->user());
+
         return back()->with('success', 'Report acknowledged.');
     }
 
-    public function invalidate(EmergencyReport $report)
+    public function invalidate(Request $request, EmergencyReport $report, EmergencyReportWorkflow $workflow)
     {
-        $report->update(['status' => 'invalid']);
+        Gate::authorize('invalidate', $report);
+        $workflow->transition($report, 'invalid', $request->user());
+
         return back()->with('success', 'Report marked invalid.');
     }
 }

@@ -1,12 +1,14 @@
 import { Head, Link } from '@inertiajs/react';
+import { route } from 'ziggy-js';
 import { AlertCircle, Bell, CalendarDays, Megaphone, Siren } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
-import { StatusBadge } from '@/Components/StatusBadge';
-import { Button } from '@/Components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/Components/ui/card';
+import { StatusBadge } from '@/components/StatusBadge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDateTime } from '@/lib/utils';
+import type { EmergencyReport, AnnouncementTeaser } from '@/types/website';
 
-export default function Dashboard({ active, announcements, unread, approved }: { active: any[]; announcements: any[]; unread: number; approved: boolean }) {
+export default function Dashboard({ active, announcements, unread, approved }: { active: EmergencyReport[]; announcements: AnnouncementTeaser[]; unread: number; approved: boolean }) {
   return (
     <AppLayout>
       <Head title="Home" />

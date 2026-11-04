@@ -1,4 +1,5 @@
 import { Head, router, useForm } from "@inertiajs/react";
+import { route } from "ziggy-js";
 import {
     Calendar,
     ImageIcon,
@@ -11,11 +12,11 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import AppLayout from "@/Layouts/AppLayout";
-import { PageHeader } from "@/Components/PageHeader";
-import { EmptyState } from "@/Components/EmptyState";
-import { ServerPagination } from "@/Components/ServerPagination";
+import { PageHeader } from "@/components/PageHeader";
+import { EmptyState } from "@/components/EmptyState";
+import { ServerPagination } from "@/components/ServerPagination";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Badge } from "@/Components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -27,7 +28,7 @@ import {
     SelectItem,
     SelectTrigger,
     SelectValue,
-} from "@/Components/ui/select";
+} from "@/components/ui/select";
 import {
     Dialog,
     DialogContent,
@@ -35,7 +36,7 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@/Components/ui/dialog";
+} from "@/components/ui/dialog";
 import { useServerFilters } from "@/hooks/useServerFilters";
 import { formatDateTime } from "@/lib/utils";
 import type { Paginated } from "@/types";
@@ -116,15 +117,11 @@ export default function Index({ announcements, categories, filters }: Props) {
         };
         if (editing) {
             // multipart + PUT must be spoofed through POST in Laravel
-            form.transform((d) => ({ ...d, _method: "put" })).post(
-                route("admin.announcements.update", editing.id),
-                opts,
-            );
+            form.transform((d) => ({ ...d, _method: "put" }));
+            form.post(route("admin.announcements.update", editing.id), opts);
         } else {
-            form.transform((d) => d).post(
-                route("admin.announcements.store"),
-                opts,
-            );
+            form.transform((d) => d);
+            form.post(route("admin.announcements.store"), opts);
         }
     };
 

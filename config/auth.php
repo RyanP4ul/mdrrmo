@@ -90,6 +90,10 @@ return [
     */
 
     'passwords' => [
+        'mobile' => [
+            'provider' => 'users', 'table' => 'mobile_password_reset_tokens',
+            'expire' => 60, 'throttle' => 60,
+        ],
         'users' => [
             'provider' => 'users',
             'table' => env('AUTH_PASSWORD_RESET_TOKEN_TABLE', 'password_reset_tokens'),

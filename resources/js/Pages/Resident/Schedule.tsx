@@ -1,30 +1,32 @@
 import { Head, router, useForm } from "@inertiajs/react";
+import { route } from "ziggy-js";
 import { CalendarDays } from "lucide-react";
 import AppLayout from "@/Layouts/AppLayout";
-import { PageHeader } from "@/Components/PageHeader";
-import { EmptyState } from "@/Components/EmptyState";
-import { StatusBadge } from "@/Components/StatusBadge";
-import { ServerPagination } from "@/Components/ServerPagination";
+import { PageHeader } from "@/components/PageHeader";
+import { EmptyState } from "@/components/EmptyState";
+import { StatusBadge } from "@/components/StatusBadge";
+import { ServerPagination } from "@/components/ServerPagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/Components/ui/textarea";
+import { Textarea } from "@/components/ui/textarea";
 import {
     Select,
     SelectContent,
     SelectItem,
     SelectTrigger,
     SelectValue,
-} from "@/Components/ui/select";
+} from "@/components/ui/select";
 import type { Paginated } from "@/types";
+import type { ServiceSchedule } from "@/types/website";
 
 export default function Schedule({
     services,
     schedules,
 }: {
     services: string[];
-    schedules: Paginated<any>;
+    schedules: Paginated<ServiceSchedule>;
 }) {
     const form = useForm({
         service_type: "",

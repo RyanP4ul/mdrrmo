@@ -7,9 +7,15 @@ use App\Models\EmergencyReport;
 use App\Models\IncidentType;
 use App\Models\ResidentNotification;
 use App\Models\ResidentUser;
+use App\Models\ServiceSchedule;
+use App\Support\MobilePage;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class MobileResidentApiController extends Controller
 {
@@ -18,39 +24,37 @@ class MobileResidentApiController extends Controller
         /** @var ResidentUser $resident */
         $resident = $request->user();
 
+        $reports = MobilePage::make($resident->reports()->with('incidentType:id,name,color'), fn (EmergencyReport $report): array => $this->reportData($report));
+        $schedules = MobilePage::make($resident->schedules());
+        $notifications = MobilePage::make(ResidentNotification::query()->where('user_id', $resident->getKey()));
+
         return response()->json([
             'profile' => [
-                'id' => $resident->getKey(),
-                'name' => $resident->full_name,
+                'id' => $resident->getKey(), 'name' => $resident->full_name,
                 'contact' => $resident->contact_number ?? '',
-                'address' => collect([
-                    $resident->house_no,
-                    $resident->street,
-                    $resident->barangay,
-                    $resident->city,
-                    $resident->province,
-                ])->filter()->implode(', '),
-                'email' => $resident->email,
+                'address' => collect([$resident->house_no, $resident->street, $resident->barangay, $resident->city, $resident->province])->filter()->implode(', '),
+                'email' => $resident->email, 'registration_status' => $resident->registration_status,
             ],
-            'incident_types' => IncidentType::query()
-                ->orderBy('name')
-                ->get(['id', 'name', 'priority', 'color']),
-            'reports' => $resident->reports()
-                ->with('incidentType:id,name,color')
-                ->latest('reported_at')
-                ->limit(50)
-                ->get()
-                ->map(fn (EmergencyReport $report): array => $this->reportData($report)),
-            'schedules' => $resident->schedules()
-                ->latest()
-                ->limit(50)
-                ->get(['id', 'service_type', 'preferred_date', 'preferred_time', 'address', 'notes', 'status', 'created_at']),
-            'notifications' => ResidentNotification::query()
-                ->where('user_id', $resident->getKey())
-                ->latest()
-                ->limit(50)
-                ->get(['id', 'type', 'title', 'message', 'read_at', 'created_at']),
+            'incident_types' => IncidentType::query()->orderBy('name')->get(['id', 'name', 'priority', 'color']),
+            'reports' => $reports['data'], 'schedules' => $schedules['data'], 'notifications' => $notifications['data'],
+            'paging' => ['reports' => $reports['next_before'], 'schedules' => $schedules['next_before'], 'notifications' => $notifications['next_before']],
+            'unread_count' => ResidentNotification::query()->where('user_id', $resident->getKey())->whereNull('read_at')->count(),
         ]);
+    }
+
+    public function reports(Request $request): JsonResponse
+    {
+        return response()->json(MobilePage::make($request->user()->reports()->with('incidentType:id,name,color'), fn (EmergencyReport $report): array => $this->reportData($report), $request));
+    }
+
+    public function schedules(Request $request): JsonResponse
+    {
+        return response()->json(MobilePage::make($request->user()->schedules(), request: $request));
+    }
+
+    public function notifications(Request $request): JsonResponse
+    {
+        return response()->json(MobilePage::make(ResidentNotification::query()->where('user_id', $request->user()->getKey()), request: $request));
     }
 
     public function storeReport(Request $request): JsonResponse
@@ -68,61 +72,95 @@ class MobileResidentApiController extends Controller
             'description' => ['required', 'string', 'max:2000'],
         ]);
 
-        $incidentType = IncidentType::query()->findOrFail($data['incident_type_id']);
-        $report = $resident->reports()->create($data + [
-            'reference' => 'RPT-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
-            'status' => 'pending',
-            'priority' => $incidentType->priority,
-            'source' => 'mobile-app',
-            'reported_by' => $resident->getKey(),
-            'reported_by_type' => $resident->getMorphClass(),
-            'reporter_name' => $resident->full_name,
-            'reporter_contact' => $resident->contact_number,
-            'reported_at' => now(),
-        ]);
-        $notification = ResidentNotification::query()->create([
-            'user_id' => $resident->getKey(),
-            'type' => 'report_update',
-            'title' => 'Report received',
-            'message' => "Your report {$report->reference} has been received by MDRRMO.",
-            'related_type' => EmergencyReport::class,
-            'related_id' => $report->getKey(),
-        ]);
-        $report->load('incidentType:id,name,color');
+        return DB::transaction(function () use ($resident, $data): JsonResponse {
+            $incidentType = IncidentType::query()->findOrFail($data['incident_type_id']);
+            $report = $resident->reports()->create($data + [
+                'reference' => 'RPT-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
+                'status' => 'pending',
+                'priority' => $incidentType->priority,
+                'source' => 'mobile-app',
+                'reported_by' => $resident->getKey(),
+                'reported_by_type' => $resident->getMorphClass(),
+                'reporter_name' => $resident->full_name,
+                'reporter_contact' => $resident->contact_number,
+                'reported_at' => now(),
+            ]);
+            $notification = ResidentNotification::query()->create([
+                'user_id' => $resident->getKey(),
+                'type' => 'report_update',
+                'title' => 'Report received',
+                'message' => "Your report {$report->reference} has been received by MDRRMO.",
+                'related_type' => EmergencyReport::class,
+                'related_id' => $report->getKey(),
+            ]);
+            $report->load('incidentType:id,name,color');
 
-        return response()->json([
-            'report' => $this->reportData($report),
-            'notification' => $notification,
-        ], 201);
+            return response()->json([
+                'report' => $this->reportData($report),
+                'notification' => $notification,
+            ], 201);
+        });
     }
 
     public function storeSchedule(Request $request): JsonResponse
     {
         /** @var ResidentUser $resident */
         $resident = $request->user();
+        abort_unless($resident->registration_status === 'accepted', 403, 'Your account is awaiting approval.');
 
         $data = $request->validate([
             'service_type' => ['required', 'string', 'in:'.implode(',', ResidentController::SERVICES)],
-            'preferred_date' => ['required', 'date', 'after_or_equal:today'],
-            'preferred_time' => ['required', 'string', 'max:20'],
+            'preferred_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:'.now(config('mobile.timezone'))->toDateString()],
+            'preferred_time' => ['required', 'date_format:H:i,g:i A'],
             'address' => ['required', 'string', 'max:255'],
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $schedule = $resident->schedules()->create($data + ['status' => 'pending']);
-        $notification = ResidentNotification::query()->create([
-            'user_id' => $resident->getKey(),
-            'type' => 'general',
-            'title' => 'Schedule request received',
-            'message' => "Your {$schedule->service_type} request has been received by MDRRMO.",
-            'related_type' => $schedule::class,
-            'related_id' => $schedule->getKey(),
-        ]);
+        $time = Carbon::createFromFormat(str_contains($data['preferred_time'], 'M') ? 'g:i A' : 'H:i', $data['preferred_time'])->format('H:i');
+        $when = Carbon::parse($data['preferred_date'].' '.$time, config('mobile.timezone'));
+        if ($when->isPast()) {
+            throw ValidationException::withMessages(['preferred_time' => 'Choose a future date and time.']);
+        }
+        $data['preferred_time'] = $time;
 
-        return response()->json([
-            'schedule' => $schedule,
-            'notification' => $notification,
-        ], 201);
+        return DB::transaction(function () use ($resident, $data): JsonResponse {
+            $schedule = $resident->schedules()->create($data + ['status' => 'pending']);
+            $notification = ResidentNotification::query()->create([
+                'user_id' => $resident->getKey(),
+                'type' => 'general',
+                'title' => 'Schedule request received',
+                'message' => "Your {$schedule->service_type} request has been received by MDRRMO.",
+                'related_type' => $schedule::class,
+                'related_id' => $schedule->getKey(),
+            ]);
+
+            return response()->json([
+                'schedule' => $schedule,
+                'notification' => $notification,
+            ], 201);
+        });
+    }
+
+    public function cancelSchedule(Request $request, int $schedule): JsonResponse
+    {
+        return DB::transaction(function () use ($request, $schedule): JsonResponse {
+            $record = $request->user()->schedules()->whereKey($schedule)->lockForUpdate()->firstOrFail();
+            if ($record->status === 'cancelled') {
+                return response()->json(['schedule' => $record]);
+            }
+            Gate::authorize('cancel', $record);
+            $record->update(['status' => 'cancelled']);
+            $notification = ResidentNotification::query()->create([
+                'user_id' => $request->user()->getKey(),
+                'type' => 'schedule_cancelled',
+                'title' => 'Schedule cancelled',
+                'message' => "Your {$record->service_type} request has been cancelled.",
+                'related_type' => ServiceSchedule::class,
+                'related_id' => $record->getKey(),
+            ]);
+
+            return response()->json(['schedule' => $record, 'notification' => $notification]);
+        });
     }
 
     public function markRead(Request $request, int $notification): JsonResponse
@@ -157,7 +195,7 @@ class MobileResidentApiController extends Controller
             'incident_type_id' => $report->incident_type_id,
             'type' => $report->incidentType?->name ?? 'Unknown',
             'location' => $report->location,
-            'status' => $report->status,
+            'status' => $report->withdrawn_at ? 'withdrawn' : $report->status,
             'priority' => $report->priority,
             'lat' => $report->lat,
             'lng' => $report->lng,

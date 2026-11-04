@@ -1,18 +1,20 @@
-import { Head, router } from '@inertiajs/react';
+import { Head, Link, router } from '@inertiajs/react';
 import { lazy, Suspense } from 'react';
-import { AlertTriangle, CheckCircle, MapPin, Siren, UserPlus, Users, Activity } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle, MapPin, Siren, UserPlus, Users, Activity } from 'lucide-react';
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import AppLayout from '@/Layouts/AppLayout';
-import { PageHeader } from '@/Components/PageHeader';
-import { EmptyState } from '@/Components/EmptyState';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/Components/ui/card';
-import { ScrollArea } from '@/Components/ui/scroll-area';
-import { Tabs, TabsList, TabsTrigger } from '@/Components/ui/tabs';
-import { Skeleton } from '@/Components/ui/skeleton';
+import { PageHeader } from '@/components/PageHeader';
+import { EmptyState } from '@/components/EmptyState';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Skeleton } from '@/components/ui/skeleton';
 import { LayoutDashboard } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { StatCard } from '@/components/StatCard';
 
 // Leaflet touches `window` – lazy-load it so Inertia SSR (if enabled) doesn't break
-const HeatMap = lazy(() => import('@/Components/maps/IncidentHeatMap'));
+const HeatMap = lazy(() => import('@/components/maps/IncidentHeatMap'));
 
 interface Props {
   period: 'today' | 'weekly' | 'monthly';
@@ -33,26 +35,21 @@ export default function Dashboard({ period, stats, byType, heatmap, recentActivi
   return (
     <AppLayout>
       <Head title="Dashboard" />
-      <PageHeader icon={LayoutDashboard} title="Dashboard" description="Live overview of emergency operations" />
+      <PageHeader icon={LayoutDashboard} title="Operations overview" description="Keep track of incidents, residents, and the teams serving your community."
+        actions={<Button asChild><Link href="/admin/reports">View emergency reports<ArrowRight className="size-4" /></Link></Button>} />
+
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-blue-200 bg-blue-50 p-5">
+        <div><p className="text-sm font-semibold text-blue-950">{stats.pendingApprovals > 0 ? `${stats.pendingApprovals} resident account${stats.pendingApprovals === 1 ? '' : 's'} awaiting approval` : 'Your administration workspace'}</p><p className="mt-1 text-sm text-blue-800">{stats.pendingApprovals > 0 ? 'Review registrations to help residents access emergency services.' : 'Manage accounts, coordinate response teams, and keep residents informed.'}</p></div>
+        <div className="flex flex-wrap gap-2"><Button asChild variant="outline" className="bg-white"><Link href="/admin/users"><Users className="size-4" />Manage users</Link></Button><Button asChild variant="outline" className="bg-white"><Link href="/admin/response-teams">Response teams<ArrowRight className="size-4" /></Link></Button></div>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map(({ title, value, sub, icon: Icon, tone }) => (
-          <Card key={title} className="transition-shadow hover:shadow-md">
-            <CardContent className="flex items-center justify-between p-6">
-              <div>
-                <p className="text-sm text-muted-foreground">{title}</p>
-                <p className="mt-1 text-3xl font-semibold tabular-nums">{value}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{sub}</p>
-              </div>
-              <div className={`grid size-12 place-items-center rounded-full ${tone}`}><Icon className="size-6" /></div>
-            </CardContent>
-          </Card>
-        ))}
+        {cards.map(({ title, value, sub, icon, tone }) => <StatCard key={title} label={title} value={value} hint={sub} icon={icon} tone={tone} />)}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3">
-          <CardHeader className="flex-row items-start justify-between space-y-0">
+          <CardHeader className="flex flex-wrap items-start justify-between gap-4 space-y-0">
             <div><CardTitle className="text-base">Incident type distribution</CardTitle><CardDescription>Reports by type</CardDescription></div>
             <Tabs value={period} onValueChange={(p) => router.get('/admin', { period: p }, { preserveState: true, preserveScroll: true, only: ['byType', 'period'] })}>
               <TabsList className="h-8">
@@ -67,7 +64,7 @@ export default function Dashboard({ period, stats, byType, heatmap, recentActivi
                   <Pie data={byType} dataKey="value" nameKey="name" innerRadius={55} outerRadius={95} paddingAngle={2} stroke="none">
                     {byType.map((t) => <Cell key={t.id} fill={t.color} />)}
                   </Pie>
-                  <Tooltip formatter={(v: number, n: string) => [`${v} reports`, n]} contentStyle={{ borderRadius: 8, fontSize: 13 }} />
+                  <Tooltip formatter={(value, name) => [`${Number(value ?? 0)} reports`, String(name)]} contentStyle={{ borderRadius: 8, fontSize: 13 }} />
                   <Legend iconType="circle" iconSize={9} />
                 </PieChart>
               </ResponsiveContainer>
@@ -79,6 +76,7 @@ export default function Dashboard({ period, stats, byType, heatmap, recentActivi
           <CardHeader><CardTitle className="text-base">Recent activity</CardTitle><CardDescription>From the audit log</CardDescription></CardHeader>
           <CardContent className="p-0">
             <ScrollArea className="h-72">
+              {recentActivity.length === 0 && <EmptyState icon={Activity} title="No recent activity" hint="Account and operations updates will appear here." />}
               <ul className="space-y-1 px-4 pb-4">
                 {recentActivity.map((a) => (
                   <li key={a.id} className="flex items-start gap-3 rounded-lg p-2 hover:bg-muted/50">
@@ -91,12 +89,13 @@ export default function Dashboard({ period, stats, byType, heatmap, recentActivi
                 ))}
               </ul>
             </ScrollArea>
+            <Link href="/admin/audit-logs" className="mx-4 flex items-center justify-between border-t py-3 text-sm font-medium text-primary">View audit log<ArrowRight className="size-4" /></Link>
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader className="flex-row items-center gap-2 space-y-0">
+        <CardHeader className="flex items-center gap-2 space-y-0">
           <MapPin className="size-5 text-red-500" />
           <div><CardTitle className="text-base">Incident heat map</CardTitle><CardDescription>Last 3 months</CardDescription></div>
         </CardHeader>

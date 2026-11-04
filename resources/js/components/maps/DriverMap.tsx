@@ -1,4 +1,5 @@
-import { Ambulance, Flame, Siren, Truck } from "lucide-react";
+import { UserRound, Siren } from "lucide-react";
+import { useEffect, useRef } from "react";
 import {
     Map,
     MapControls,
@@ -7,16 +8,19 @@ import {
     MarkerContent,
     MarkerPopup,
     MarkerTooltip,
+    useMap,
 } from "@/components/ui/map";
 import { cn } from "@/lib/utils";
-import { StatusBadge } from "@/Components/StatusBadge";
+import { StatusBadge } from "@/components/StatusBadge";
 import { DEFAULT_CENTER, DEFAULT_ZOOM } from "./constants";
 
-export interface FleetVehicle {
+export interface MapDriver {
+    eventAt?: string;
+    assignedReportId?: number | null;
     id: number;
     teamName: string | null;
-    type: string;
-    plate: string;
+    name: string;
+    expiresAt: string;
     lat: number;
     lng: number;
     status: string;
@@ -40,32 +44,54 @@ export interface MapReport {
 const statusRing: Record<string, string> = {
     "en-route": "bg-amber-500",
     "on-scene": "bg-red-600",
+    dispatched: "bg-amber-600",
     available: "bg-emerald-600",
     returning: "bg-sky-600",
     offline: "bg-slate-400",
 };
-const icons: Record<string, typeof Ambulance> = {
-    ambulance: Ambulance,
-    "fire-truck": Flame,
-    "police-car": Siren,
-    "rescue-van": Truck,
-    "utility-truck": Truck,
-};
 
-export function FleetMap({
-    vehicles,
+function DriverMapCamera({ drivers, selectedId }: { drivers: MapDriver[]; selectedId?: number | null }) {
+    const { map, isLoaded } = useMap();
+    const framed = useRef(false);
+    const previousSelection = useRef<number | null>(null);
+
+    useEffect(() => {
+        if (!map || !isLoaded || drivers.length === 0) return;
+        const selected = drivers.find((driver) => driver.id === selectedId);
+        if (selected && previousSelection.current !== selectedId) {
+            map.flyTo({ center: [selected.lng, selected.lat], zoom: Math.max(map.getZoom(), 15), duration: 400 });
+            framed.current = true;
+        } else if (!framed.current) {
+            if (drivers.length === 1) {
+                map.flyTo({ center: [drivers[0].lng, drivers[0].lat], zoom: 15, duration: 400 });
+            } else {
+                map.fitBounds([
+                    [Math.min(...drivers.map((driver) => driver.lng)), Math.min(...drivers.map((driver) => driver.lat))],
+                    [Math.max(...drivers.map((driver) => driver.lng)), Math.max(...drivers.map((driver) => driver.lat))],
+                ], { padding: 60, maxZoom: 15, duration: 400 });
+            }
+            framed.current = true;
+        }
+        previousSelection.current = selectedId ?? null;
+    }, [drivers, selectedId, map, isLoaded]);
+
+    return null;
+}
+
+export function DriverMap({
+    drivers,
     reports = [],
     selectedId,
     onSelect,
     className = "h-[560px]",
 }: {
-    vehicles: FleetVehicle[];
+    drivers: MapDriver[];
     reports?: MapReport[];
     selectedId?: number | null;
     onSelect?: (id: number) => void;
     className?: string;
 }) {
-    const selected = vehicles.find((v) => v.id === selectedId);
+    const selected = drivers.find((v) => v.id === selectedId);
     const dest = selected?.report
         ? reports.find((r) => r.id === selected.report!.id)
         : null;
@@ -73,6 +99,7 @@ export function FleetMap({
     return (
         <div className={cn("overflow-hidden rounded-lg border", className)}>
             <Map center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM}>
+                <DriverMapCamera drivers={drivers} selectedId={selectedId} />
                 <MapControls showZoom showCompass showFullscreen />
                 {selected && dest && (
                     <MapRoute
@@ -109,8 +136,8 @@ export function FleetMap({
                     </MapMarker>
                 ))}
 
-                {vehicles.map((v) => {
-                    const Icon = icons[v.type] ?? Truck;
+                {drivers.map((v) => {
+                    const Icon = UserRound;
                     return (
                         <MapMarker
                             key={`v${v.id}`}
@@ -131,11 +158,11 @@ export function FleetMap({
                                 </div>
                             </MarkerContent>
                             <MarkerTooltip>
-                                {v.teamName ?? v.plate}
+                                {v.teamName ?? v.name}
                             </MarkerTooltip>
                             <MarkerPopup>
                                 <p className="font-medium">
-                                    {v.teamName} · {v.plate}
+                                    {v.teamName} · {v.name}
                                 </p>
                                 <p className="text-xs text-muted-foreground capitalize">
                                     {v.status.replace("-", " ")} · {v.speed}{" "}

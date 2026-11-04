@@ -1,30 +1,32 @@
 import { Head, router, useForm } from '@inertiajs/react';
+import { route } from 'ziggy-js';
 import { CalendarClock, Pencil, Plus, Shield, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
-import { PageHeader } from '@/Components/PageHeader';
-import { FilterBar, FilterSelect } from '@/Components/FilterBar';
-import { EmptyState } from '@/Components/EmptyState';
-import { StatusBadge } from '@/Components/StatusBadge';
-import { ServerPagination } from '@/Components/ServerPagination';
-import { ConfirmDialog } from '@/Components/ConfirmDialog';
-import { Button } from '@/Components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/Components/ui/card';
-import { Input } from '@/Components/ui/input';
-import { Label } from '@/Components/ui/label';
-import { Checkbox } from '@/Components/ui/checkbox';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/Components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/Components/ui/dialog';
+import { PageHeader } from '@/components/PageHeader';
+import { FilterBar, FilterSelect } from '@/components/FilterBar';
+import { EmptyState } from '@/components/EmptyState';
+import { StatusBadge } from '@/components/StatusBadge';
+import { ServerPagination } from '@/components/ServerPagination';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useServerFilters } from '@/hooks/useServerFilters';
 import { formatDateTime } from '@/lib/utils';
 import type { Paginated } from '@/types';
 
-interface Member { id?: number; name: string; role: string | null; status?: string }
+interface Member { id?: number; user_id?: number | null; name: string; role: string | null; status?: string }
+interface Driver { id: number; name: string }
 interface Shift { id: number; start_time: string; end_time: string; status: string; members: Member[] }
 interface Team { id: number; team_name: string; status: string; members: Member[]; shifts: Shift[] }
 const STATUSES = ['active', 'inactive', 'on-leave', 'off-duty'];
 
-export default function Responders({ teams, filters }: { teams: Paginated<Team>; filters: Record<string, string> }) {
+export default function Responders({ teams, filters, drivers }: { teams: Paginated<Team>; filters: Record<string, string>; drivers: Driver[] }) {
   const { values, set } = useServerFilters({ search: filters.search ?? '', status: filters.status ?? '' }, ['teams']);
   const [editing, setEditing] = useState<Team | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -58,26 +60,37 @@ export default function Responders({ teams, filters }: { teams: Paginated<Team>;
             {t.shifts.length > 0 && <div className="space-y-1.5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent shifts</p>
               {t.shifts.map((s) => (
                 <div key={s.id} className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm"><span className="text-muted-foreground">{formatDateTime(s.start_time)} → {formatDateTime(s.end_time)}</span>
-                  <Select value={s.status} onValueChange={(v) => router.patch(route('dispatcher.shifts.update', s.id), { status: v }, { preserveScroll: true })}><SelectTrigger className="h-8 w-32" aria-label="Shift status"><SelectValue /></SelectTrigger>
+                  <Select value={s.status} onValueChange={(v) => router.patch(route('dispatcher.shifts.update', [t.id, s.id]), { status: v }, { preserveScroll: true })}><SelectTrigger className="h-8 w-32" aria-label="Shift status"><SelectValue /></SelectTrigger>
                     <SelectContent>{['on-shift', 'off-shift', 'on-break'].map((x) => <SelectItem key={x} value={x} className="capitalize">{x.replace('-', ' ')}</SelectItem>)}</SelectContent></Select></div>))}</div>}
           </CardContent></Card>))}</div>
       )}
       <ServerPagination page={teams} noun="team" />
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{editing ? 'Edit team' : 'New team'}</DialogTitle><DialogDescription>A team needs at least one named member.</DialogDescription></DialogHeader>
+        <DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{editing ? 'Edit team' : 'New team'}</DialogTitle><DialogDescription>Select at least one driver/responder for this team.</DialogDescription></DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5"><Label htmlFor="tn">Team name *</Label><Input id="tn" value={form.data.team_name} onChange={(e) => form.setData('team_name', e.target.value)} />{err.team_name && <p className="text-xs text-destructive">{err.team_name}</p>}</div>
             <div className="space-y-1.5"><Label>Status</Label><Select value={form.data.status} onValueChange={(v) => form.setData('status', v)}><SelectTrigger aria-label="Status"><SelectValue /></SelectTrigger><SelectContent>{STATUSES.map((s) => <SelectItem key={s} value={s} className="capitalize">{s.replace('-', ' ')}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-2"><Label>Members</Label>
               {form.data.members.map((m, i) => (
-                <div key={i} className="flex gap-2"><Input aria-label={`Member ${i + 1} name`} placeholder="Full name" value={m.name} onChange={(e) => setMember(i, { name: e.target.value })} />
-                  <Input aria-label={`Member ${i + 1} role`} className="w-32" placeholder="Role" value={m.role ?? ''} onChange={(e) => setMember(i, { role: e.target.value })} />
-                  <Button type="button" variant="ghost" size="icon" aria-label="Remove member" disabled={form.data.members.length === 1} onClick={() => form.setData('members', form.data.members.filter((_, j) => j !== i))}><X className="size-4" /></Button></div>))}
+                <div key={i} className="space-y-1">
+                  <div className="flex gap-2">
+                    <Select value={m.user_id ? String(m.user_id) : ''} onValueChange={(value) => {
+                      const driver = drivers.find((d) => d.id === Number(value));
+                      if (driver) setMember(i, { user_id: driver.id, name: driver.name, role: 'Driver/Responder' });
+                    }}>
+                      <SelectTrigger className="min-w-0 flex-1" aria-label={`Member ${i + 1} full name`} aria-invalid={!!err[`members.${i}.user_id`]}><SelectValue placeholder={m.name ? `Select account for ${m.name}` : 'Select driver/responder'} /></SelectTrigger>
+                      <SelectContent>{drivers.map((driver) => <SelectItem key={driver.id} value={String(driver.id)} disabled={form.data.members.some((member, index) => index !== i && member.user_id === driver.id)}>{driver.name}</SelectItem>)}</SelectContent>
+                    </Select>
+                    <Button type="button" variant="ghost" size="icon" aria-label="Remove member" disabled={form.data.members.length === 1} onClick={() => form.setData('members', form.data.members.filter((_, j) => j !== i))}><X className="size-4" /></Button>
+                  </div>
+                  {err[`members.${i}.user_id`] && <p className="text-xs text-destructive">{err[`members.${i}.user_id`]}</p>}
+                </div>))}
+              {drivers.length === 0 && <p className="text-xs text-muted-foreground">No driver/responder accounts found. Create an account before adding team members.</p>}
               {err.members && <p className="text-xs text-destructive">{err.members}</p>}
               <Button type="button" variant="outline" size="sm" onClick={() => form.setData('members', [...form.data.members, { name: '', role: 'Responder' }])}><Plus className="mr-1 size-3" />Add member</Button></div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button><Button disabled={form.processing} onClick={save}>{editing ? 'Save changes' : 'Create team'}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button><Button disabled={form.processing || form.data.members.some((member) => !member.user_id)} onClick={save}>{editing ? 'Save changes' : 'Create team'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

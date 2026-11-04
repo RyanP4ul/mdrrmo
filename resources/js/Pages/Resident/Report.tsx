@@ -1,15 +1,16 @@
 import { Head, useForm } from '@inertiajs/react';
+import { route } from 'ziggy-js';
 import { Siren } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
-import { PageHeader } from '@/Components/PageHeader';
-import { LocationPicker } from '@/Components/maps/LocationPicker';
-import { DEFAULT_CENTER } from '@/Components/maps/constants';
-import { Button } from '@/Components/ui/button';
-import { Card, CardContent } from '@/Components/ui/card';
-import { Input } from '@/Components/ui/input';
-import { Label } from '@/Components/ui/label';
-import { Textarea } from '@/Components/ui/textarea';
-import { RadioGroup, RadioGroupItem } from '@/Components/ui/radio-group';
+import { PageHeader } from '@/components/PageHeader';
+import { LocationPicker } from '@/components/maps/LocationPicker';
+import { DEFAULT_CENTER } from '@/components/maps/constants';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
 
 export default function Report({ types }: { types: { id: number; name: string; description: string }[] }) {

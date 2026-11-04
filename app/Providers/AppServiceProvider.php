@@ -3,10 +3,15 @@
 namespace App\Providers;
 
 use App\Auth\RoleUserProvider;
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Auth;
-use Laravel\Sanctum\Sanctum;
+use App\Models\EmergencyReport;
 use App\Models\Sanctum\PersonalAccessToken;
+use App\Observers\AutomaticDispatchObserver;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\ServiceProvider;
+use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -24,6 +29,14 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Auth::provider('role-users', fn ($app, array $config) => new RoleUserProvider($app['hash']));
+        EmergencyReport::observe(AutomaticDispatchObserver::class);
         Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
+        RateLimiter::for('mobile-login', function (Request $request): array {
+            return [
+                Limit::perMinute(5)->by('mobile-login:'.hash('sha256', strtolower((string) $request->input('email')).'|'.$request->ip())),
+                Limit::perMinute(30)->by('mobile-login-ip:'.$request->ip()),
+            ];
+        });
+        RateLimiter::for('mobile-register', fn (Request $request) => Limit::perHour(10)->by('mobile-register:'.$request->ip()));
     }
 }

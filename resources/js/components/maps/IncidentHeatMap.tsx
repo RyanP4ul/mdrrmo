@@ -1,4 +1,4 @@
-import { Map, MapControls, MapMarker, MarkerContent, MarkerTooltip } from '@/Components/ui/map';
+import { Map, MapControls, MapMarker, MarkerContent, MarkerTooltip } from '@/components/ui/map';
 import { DEFAULT_CENTER, DEFAULT_ZOOM } from './constants';
 
 interface Point { lat: number; lng: number; type: string; color: string; intensity: number }

@@ -1,17 +1,19 @@
 import { Head, router } from '@inertiajs/react';
+import { route } from 'ziggy-js';
 import { Bell, CalendarCheck, CalendarX, Info, Siren } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
-import { PageHeader } from '@/Components/PageHeader';
-import { EmptyState } from '@/Components/EmptyState';
-import { ServerPagination } from '@/Components/ServerPagination';
-import { Button } from '@/Components/ui/button';
-import { Card } from '@/Components/ui/card';
+import { PageHeader } from '@/components/PageHeader';
+import { EmptyState } from '@/components/EmptyState';
+import { ServerPagination } from '@/components/ServerPagination';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { cn, formatDateTime } from '@/lib/utils';
 import type { Paginated } from '@/types';
+import type { ResidentNotification } from '@/types/website';
 
 const icon = { schedule_confirmed: CalendarCheck, schedule_cancelled: CalendarX, report_update: Siren, general: Info } as const;
 
-export default function Notifications({ items }: { items: Paginated<any> }) {
+export default function Notifications({ items }: { items: Paginated<ResidentNotification> }) {
   const unread = items.data.some((n) => !n.read_at);
   return (
     <AppLayout>

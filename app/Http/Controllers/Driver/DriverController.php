@@ -2,10 +2,17 @@
 
 namespace App\Http\Controllers\Driver;
 
-use App\Events\VehicleLocationUpdated;
+use App\Events\DriverLocationUpdated;
 use App\Http\Controllers\Controller;
-use App\Models\{EmergencyReport, ReportForm, Vehicle};
+use App\Http\Requests\SavePatientReportRequest;
+use App\Http\Requests\StoreDriverLocationPingRequest;
+use App\Models\DriverLocation;
+use App\Models\EmergencyReport;
+use App\Models\ReportForm;
+use App\Services\DriverResponseProgress;
+use App\Services\EmergencyReportWorkflow;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Inertia\Inertia;
 
 class DriverController extends Controller
@@ -18,9 +25,9 @@ class DriverController extends Controller
     public function dashboard(Request $request)
     {
         return Inertia::render('Driver/Dashboard', [
-            'active' => $this->mine($request)->whereIn('status', ['dispatched', 'acknowledged'])->latest('reported_at')->get(),
+            'active' => $this->mine($request)->whereIn('status', ['dispatched', 'acknowledged'])->with('trip')->latest('reported_at')->get(),
             'doneToday' => $this->mine($request)->where('status', 'resolved')->whereDate('resolved_at', today())->count(),
-            'vehicle' => Vehicle::whereHas('team.members', fn ($q) => $q->where('user_id', $request->user()->id))->first(),
+
         ]);
     }
 
@@ -32,20 +39,13 @@ class DriverController extends Controller
     }
 
     /** Driver advances an assignment: dispatched -> (en-route/on-scene) -> resolved */
-    public function updateStatus(Request $request, EmergencyReport $report)
+    public function updateStatus(Request $request, EmergencyReport $report, EmergencyReportWorkflow $workflow)
     {
-        abort_unless($report->assigned_driver_id === $request->user()->id, 403);
-        $d = $request->validate(['vehicle_status' => ['required', 'in:en-route,on-scene,returning,available']]);
+        $request->merge(['response_status' => $request->input('response_status', $request->input('vehicle_status'))]);
+        $data = $request->validate(['response_status' => ['required', 'in:en-route,on-scene,returning,available']]);
+        app(DriverResponseProgress::class)->advance($request->user(), $report, $data['response_status']);
 
-        $vehicle = Vehicle::whereHas('team.members', fn ($q) => $q->where('user_id', $request->user()->id))->first();
-        $vehicle?->update(['status' => $d['vehicle_status'], 'assigned_report_id' => $d['vehicle_status'] === 'available' ? null : $report->id]);
-
-        if ($d['vehicle_status'] === 'available') {
-            $report->update(['status' => 'resolved', 'resolved_at' => now()]);
-        }
-        if ($vehicle) event(new VehicleLocationUpdated($vehicle));
-
-        return back()->with('success', 'Status updated.');
+        return back()->with('success', 'Response progress updated.');
     }
 
     public function reports(Request $request)
@@ -55,11 +55,10 @@ class DriverController extends Controller
         ]);
     }
 
-    public function saveForm(Request $request, EmergencyReport $report)
+    public function saveForm(SavePatientReportRequest $request, EmergencyReport $report)
     {
-        abort_unless($report->assigned_driver_id === $request->user()->id, 403);
-        $d = $request->validate(['driver_section' => ['required', 'array'], 'emergency_section' => ['required', 'array']]);
-        ReportForm::updateOrCreate(['emergency_report_id' => $report->id], $d);
+        $validated = $request->validated();
+        ReportForm::updateOrCreate(['emergency_report_id' => $report->id], $validated);
 
         return back()->with('success', 'Patient care report saved.');
     }
@@ -67,21 +66,21 @@ class DriverController extends Controller
     public function tracking(Request $request)
     {
         return Inertia::render('Driver/Tracking', [
-            'vehicle' => Vehicle::with('team:id,team_name', 'report:id,reference,location,lat,lng')
-                ->whereHas('team.members', fn ($q) => $q->where('user_id', $request->user()->id))->first(),
+            'location' => DriverLocation::find($request->user()->id)?->mapData(),
         ]);
     }
 
     /** Called every few seconds by the driver's phone (navigator.geolocation.watchPosition). */
-    public function ping(Request $request)
+    public function ping(StoreDriverLocationPingRequest $request)
     {
-        $d = $request->validate(['lat' => ['required', 'numeric'], 'lng' => ['required', 'numeric'],
-            'speed' => ['nullable', 'numeric'], 'heading' => ['nullable', 'numeric']]);
+        $d = $request->validated();
 
-        $vehicle = Vehicle::whereHas('team.members', fn ($q) => $q->where('user_id', $request->user()->id))->firstOrFail();
-        $vehicle->update(['lat' => $d['lat'], 'lng' => $d['lng'], 'speed' => (int) round(($d['speed'] ?? 0) * 3.6),
-            'heading' => (int) ($d['heading'] ?? 0), 'last_updated_at' => now()]);
-        event(new VehicleLocationUpdated($vehicle));
+        $location = DriverLocation::updateOrCreate(['driver_id' => $request->user()->id], [
+            'session_id' => (string) Str::uuid(), 'lat' => $d['lat'], 'lng' => $d['lng'],
+            'accuracy' => $d['accuracy'], 'speed' => (int) round(($d['speed'] ?? 0) * 3.6),
+            'heading' => (int) round($d['heading'] ?? 0), 'observed_at' => now(), 'expires_at' => now()->addMinutes(3),
+        ]);
+        DriverLocationUpdated::dispatch($location);
 
         return response()->noContent();
     }

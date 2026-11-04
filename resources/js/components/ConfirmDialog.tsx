@@ -1,7 +1,7 @@
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/Components/ui/alert-dialog';
+} from '@/components/ui/alert-dialog';
 
 export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel = 'Delete', onConfirm }: {
   open: boolean; onOpenChange: (o: boolean) => void; title: string; description: string;

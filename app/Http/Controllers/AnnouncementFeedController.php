@@ -22,7 +22,7 @@ class AnnouncementFeedController extends Controller
                 ->latest()->paginate(4)->withQueryString()
                 ->through(fn ($a) => ['id' => $a->id, 'title' => $a->title, 'category' => $a->category, 'description' => $a->description,
                     'image' => $a->image_path ? Storage::url($a->image_path) : null,
-                    'postedAt' => $a->created_at->toIso8601String(), 'postedBy' => $a->author->full_name]),
+                    'postedAt' => $a->created_at->toIso8601String(), 'postedBy' => $a->author?->full_name ?? 'Former user']),
         ]);
     }
 }

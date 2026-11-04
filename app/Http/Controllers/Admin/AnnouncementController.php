@@ -11,7 +11,7 @@ use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
 class AnnouncementController extends Controller
-{
+    {
     public function index(Request $request)
     {
         $filters = $request->only('search', 'category');
@@ -29,10 +29,10 @@ class AnnouncementController extends Controller
                     'description' => $a->description,
                     'image' => $a->image_path ? Storage::url($a->image_path) : null,
                     'postedAt' => $a->created_at->toIso8601String(),
-                    'postedBy' => $a->author->full_name,
+                    'postedBy' => $a->author?->full_name ?? 'Former user',
                 ]),
         ]);
-    }
+}
 
     public function store(Request $request)
     {
@@ -44,28 +44,30 @@ class AnnouncementController extends Controller
         Audit::record('CREATE_ANNOUNCEMENT', "Posted announcement \"{$a->title}\"");
 
         return back()->with('success', 'Announcement created.');
-    }
+}
 
     public function update(Request $request, Announcement $announcement)
     {
         $data = $this->validated($request);
         if (isset($data['image_path']) && $announcement->image_path) {
             Storage::disk('public')->delete($announcement->image_path);
-        }
+}
         $announcement->update($data);
         Audit::record('UPDATE_ANNOUNCEMENT', "Updated announcement \"{$announcement->title}\"");
 
         return back()->with('success', 'Announcement updated.');
-    }
+}
 
     public function destroy(Announcement $announcement)
     {
-        if ($announcement->image_path) Storage::disk('public')->delete($announcement->image_path);
+        if ($announcement->image_path) {
+            Storage::disk('public')->delete($announcement->image_path);
+}
         $announcement->delete();
         Audit::record('DELETE_ANNOUNCEMENT', "Deleted announcement \"{$announcement->title}\"");
 
         return back()->with('success', 'Announcement deleted.');
-    }
+}
 
     private function validated(Request $request): array
     {
@@ -78,9 +80,9 @@ class AnnouncementController extends Controller
 
         if ($request->hasFile('image')) {
             $data['image_path'] = $request->file('image')->store('announcements', 'public');
-        }
+}
         unset($data['image']);
 
         return $data;
-    }
+}
 }

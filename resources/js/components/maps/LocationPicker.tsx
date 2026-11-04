@@ -1,5 +1,5 @@
 import { LocateFixed } from 'lucide-react';
-import { Map, MapControls, MapMarker, MarkerContent } from '@/Components/ui/map';
+import { Map, MapControls, MapMarker, MarkerContent } from '@/components/ui/map';
 import { Button } from '@/components/ui/button';
 import { DEFAULT_CENTER } from './constants';
 

@@ -2,7 +2,7 @@ export type Role = 'admin' | 'dispatcher' | 'driver/responder' | 'resident';
 export type Priority = 'low' | 'medium' | 'high' | 'critical';
 export type ReportStatus = 'pending' | 'acknowledged' | 'dispatched' | 'resolved' | 'invalid';
 
-export interface AuthUser { id: number; full_name: string; email: string; role: Role }
+export interface AuthUser { id: number; first_name: string; last_name: string; full_name: string; email: string; role: Role }
 
 export interface Paginated<T> {
   data: T[];

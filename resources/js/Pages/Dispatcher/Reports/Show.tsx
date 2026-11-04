@@ -1,16 +1,19 @@
 import { Head, Link, router } from '@inertiajs/react';
+import { route } from 'ziggy-js';
 import { ArrowLeft, Check, Hospital, PhoneCall, Radio, Smartphone, Users } from 'lucide-react';
 import { useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
-import { StatusBadge } from '@/Components/StatusBadge';
-import { LocationMap } from '@/Components/maps/LocationMap';
-import { Badge } from '@/Components/ui/badge';
-import { Button } from '@/Components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/Components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/Components/ui/select';
+import { StartVoiceCall } from '@/components/VoiceCalls';
+import { StatusBadge } from '@/components/StatusBadge';
+import { LocationMap } from '@/components/maps/LocationMap';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn, formatDateTime } from '@/lib/utils';
+import type { DispatchTeam, EmergencyReport, HospitalRecommendation } from '@/types/website';
 
-export default function Show({ report: r, team, teams, hospitals }: { report: any; team: any; teams: { id: number; team_name: string }[]; hospitals: any[] }) {
+export default function Show({ report: r, team, teams, hospitals }: { report: EmergencyReport; team: DispatchTeam | null; teams: { id: number; team_name: string }[]; hospitals: HospitalRecommendation[] }) {
   const [teamId, setTeamId] = useState<string>(String(team?.id ?? ''));
   const [route_, setRoute] = useState<number | null>(hospitals[0]?.id ?? null);
   const open = !['resolved', 'invalid'].includes(r.status);
@@ -25,7 +28,8 @@ export default function Show({ report: r, team, teams, hospitals }: { report: an
           <StatusBadge value={r.priority} /><StatusBadge value={r.status} /></div>
           <CardTitle className="text-xl">{r.incident_type.name} · {r.reference}</CardTitle>
           <CardDescription>{r.location} — {formatDateTime(r.reported_at)}</CardDescription></div>
-        {open && <div className="flex gap-2">
+        {open && <div className="flex flex-wrap gap-2">
+          <StartVoiceCall reportId={r.id} />
           {r.status === 'pending' && <Button variant="outline" onClick={() => router.patch(route('dispatcher.reports.acknowledge', r.id), {}, { preserveScroll: true })}><Check className="mr-1 size-4" />Acknowledge</Button>}
           <Button onClick={() => router.post(route('dispatcher.reports.assign', r.id), { team_id: teamId }, { preserveScroll: true })}><Radio className="mr-1 size-4" />{team?.assigned ? 'Re-assign team' : 'Dispatch team'}</Button></div>}
       </CardHeader></Card>
@@ -34,7 +38,7 @@ export default function Show({ report: r, team, teams, hospitals }: { report: an
         <Card><CardHeader><CardTitle className="flex items-center gap-2 text-base"><Users className="size-4" />Response team</CardTitle></CardHeader><CardContent className="space-y-3">
           {open && <Select value={teamId} onValueChange={setTeamId}><SelectTrigger aria-label="Team"><SelectValue placeholder="Choose team" /></SelectTrigger><SelectContent>{teams.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.team_name}</SelectItem>)}</SelectContent></Select>}
           {team ? <><p className="text-sm font-medium">{team.name} <span className="font-normal text-muted-foreground">{team.assigned ? '(assigned)' : '(suggested)'}</span></p>
-            <ul className="space-y-1">{team.onShift.map((m: any) => <li key={m.id} className="flex justify-between rounded bg-muted/50 px-3 py-1.5 text-sm"><span>{m.name}</span><span className="text-muted-foreground">{m.role}</span></li>)}</ul></>
+            <ul className="space-y-1">{team.onShift.map((m) => <li key={m.id} className="flex justify-between rounded bg-muted/50 px-3 py-1.5 text-sm"><span>{m.name}</span><span className="text-muted-foreground">{m.role}</span></li>)}</ul></>
             : <p className="text-sm text-muted-foreground">No active team on shift.</p>}
         </CardContent></Card>
 

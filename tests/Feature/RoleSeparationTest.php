@@ -3,13 +3,13 @@
 namespace Tests\Feature;
 
 use App\Actions\Auth\LoginAction;
+use App\Auth\RoleUserProvider;
 use App\Models\Account;
 use App\Models\AdminUser;
 use App\Models\DispatcherUser;
 use App\Models\DriverResponderUser;
 use App\Models\ResidentUser;
 use App\Models\User;
-use App\Auth\RoleUserProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -59,11 +59,11 @@ class RoleSeparationTest extends TestCase
         $this->actingAs($inactiveDispatcher)->get('/dispatcher')->assertForbidden();
     }
 
-    public function test_mobile_login_rejects_admin_and_dispatcher_accounts(): void
+    public function test_mobile_login_rejects_inactive_accounts_for_every_role(): void
     {
         foreach ([
-            ['admin', 'active'],
-            ['dispatcher', 'active'],
+            ['admin', 'inactive'],
+            ['dispatcher', 'inactive'],
             ['resident', 'inactive'],
         ] as [$role, $status]) {
             $user = $this->createUser($role, $status);
@@ -111,14 +111,33 @@ class RoleSeparationTest extends TestCase
         $this->get(route('dashboard'))->assertRedirect(route('resident.dashboard'));
     }
 
+    public function test_authenticated_users_can_log_out_of_their_browser_session(): void
+    {
+        $user = $this->createUser('resident');
+
+        $this->actingAs($user)
+            ->post(route('logout'))
+            ->assertRedirect(route('login'));
+
+        $this->assertGuest();
+        $this->get(route('dashboard'))->assertRedirect(route('login'));
+    }
+
+    public function test_guests_are_redirected_to_login_when_they_attempt_to_log_out(): void
+    {
+        $this->post(route('logout'))->assertRedirect(route('login'));
+
+        $this->assertGuest();
+    }
+
     public function test_driver_api_is_limited_to_driver_responder_accounts(): void
     {
         $driver = $this->createUser('driver/responder');
-        Sanctum::actingAs($driver);
+        Sanctum::actingAs($driver, ['*']);
         $this->getJson('/api/driver-responder/teams')->assertOk();
 
         $resident = $this->createUser('resident');
-        Sanctum::actingAs($resident);
+        Sanctum::actingAs($resident, ['*']);
         $this->getJson('/api/driver-responder/teams')->assertForbidden();
     }
 

@@ -1,20 +1,22 @@
 import { Head, useForm } from '@inertiajs/react';
+import { route } from 'ziggy-js';
 import { FileText, Pencil } from 'lucide-react';
 import { useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
-import { PageHeader } from '@/Components/PageHeader';
-import { EmptyState } from '@/Components/EmptyState';
-import { StatusBadge } from '@/Components/StatusBadge';
-import { ServerPagination } from '@/Components/ServerPagination';
-import { Badge } from '@/Components/ui/badge';
-import { Button } from '@/Components/ui/button';
-import { Card, CardContent } from '@/Components/ui/card';
-import { Input } from '@/Components/ui/input';
-import { Label } from '@/Components/ui/label';
-import { Textarea } from '@/Components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/Components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/Components/ui/dialog';
+import { PageHeader } from '@/components/PageHeader';
+import { EmptyState } from '@/components/EmptyState';
+import { StatusBadge } from '@/components/StatusBadge';
+import { ServerPagination } from '@/components/ServerPagination';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { Paginated } from '@/types';
+import type { EmergencyReport } from '@/types/website';
 
 const CATEGORIES = ['Vehicular Accident', 'Medical', 'Pedia', 'Ob/Gyne', 'Others'];
 const blank = {
@@ -22,10 +24,10 @@ const blank = {
   emergency_section: { timeReported: '', timeOfArrival: '', patientName: '', age: '', sex: 'Male', address: '', typeOfIncident: 'Medical', allergies: '', medications: '', assessmentComment: '', treatmentManagement: '', vitalSigns: { bloodPressure: '', pulseRate: '', respiration: '' } },
 };
 
-export default function Reports({ reports }: { reports: Paginated<any> }) {
-  const [rep, setRep] = useState<any | null>(null);
+export default function Reports({ reports }: { reports: Paginated<EmergencyReport> }) {
+  const [rep, setRep] = useState<EmergencyReport | null>(null);
   const form = useForm(blank);
-  const open = (r: any) => { setRep(r); form.setData(r.form ? { driver_section: { ...blank.driver_section, ...r.form.driver_section }, emergency_section: { ...blank.emergency_section, ...r.form.emergency_section, vitalSigns: { ...blank.emergency_section.vitalSigns, ...r.form.emergency_section?.vitalSigns } } } : blank); };
+  const open = (r: EmergencyReport) => { setRep(r); form.setData(r.form ? { driver_section: { ...blank.driver_section, ...r.form.driver_section }, emergency_section: { ...blank.emergency_section, ...r.form.emergency_section, vitalSigns: { ...blank.emergency_section.vitalSigns, ...r.form.emergency_section?.vitalSigns } } } : blank); };
   const d = (k: keyof typeof blank.driver_section) => ({ 'aria-label': k, placeholder: k.replace(/([A-Z])/g, ' $1').toLowerCase(), value: form.data.driver_section[k], onChange: (e: React.ChangeEvent<HTMLInputElement>) => form.setData('driver_section', { ...form.data.driver_section, [k]: e.target.value }) });
   const e = (k: Exclude<keyof typeof blank.emergency_section, 'vitalSigns' | 'sex' | 'typeOfIncident'>) => ({ 'aria-label': k, placeholder: k.replace(/([A-Z])/g, ' $1').toLowerCase(), value: form.data.emergency_section[k], onChange: (ev: React.ChangeEvent<HTMLInputElement>) => form.setData('emergency_section', { ...form.data.emergency_section, [k]: ev.target.value }) });
   const vit = (k: keyof typeof blank.emergency_section.vitalSigns) => ({ 'aria-label': k, placeholder: k.replace(/([A-Z])/g, ' $1').toLowerCase(), value: form.data.emergency_section.vitalSigns[k], onChange: (ev: React.ChangeEvent<HTMLInputElement>) => form.setData('emergency_section', { ...form.data.emergency_section, vitalSigns: { ...form.data.emergency_section.vitalSigns, [k]: ev.target.value } }) });
@@ -57,7 +59,7 @@ export default function Reports({ reports }: { reports: Paginated<any> }) {
               <div className="space-y-1.5"><Label htmlFor="ac">Assessment</Label><Textarea id="ac" rows={2} value={form.data.emergency_section.assessmentComment} onChange={(ev) => form.setData('emergency_section', { ...form.data.emergency_section, assessmentComment: ev.target.value })} /></div>
               <div className="space-y-1.5"><Label htmlFor="tm">Treatment / management</Label><Textarea id="tm" rows={2} value={form.data.emergency_section.treatmentManagement} onChange={(ev) => form.setData('emergency_section', { ...form.data.emergency_section, treatmentManagement: ev.target.value })} /></div></section>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setRep(null)}>Close</Button><Button disabled={form.processing} onClick={() => form.put(route('driver.reports.form', rep.id), { preserveScroll: true, onSuccess: () => setRep(null) })}>Save report</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setRep(null)}>Close</Button><Button disabled={form.processing || !rep} onClick={() => rep && form.put(route('driver.reports.form', rep.id), { preserveScroll: true, onSuccess: () => setRep(null) })}>Save report</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </AppLayout>
