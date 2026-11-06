@@ -5,11 +5,11 @@ namespace App\Events;
 use App\Models\DriverLocation;
 use App\Models\TeamMember;
 use Illuminate\Broadcasting\PrivateChannel;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Foundation\Events\Dispatchable;
 
-class DriverLocationUpdated implements ShouldBroadcastNow, ShouldDispatchAfterCommit
+class DriverLocationUpdated implements ShouldBroadcast, ShouldDispatchAfterCommit
 {
     use Dispatchable;
 
