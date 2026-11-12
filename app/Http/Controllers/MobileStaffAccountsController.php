@@ -31,7 +31,7 @@ class MobileStaffAccountsController extends Controller
 
     private function data(User $user): array
     {
-        return $user->only(['id', 'first_name', 'last_name', 'email', 'contact_number', 'status', 'registration_status', 'barangay', 'city', 'province', 'created_at']) + ['account_key' => $user->account_key, 'role' => $user->role, 'name' => $user->full_name];
+        return $user->only(['id', 'first_name', 'last_name', 'email', 'contact_number', 'phone_number', 'status', 'registration_status', 'barangay', 'city', 'province', 'created_at']) + ['account_key' => $user->account_key, 'role' => $user->role, 'name' => $user->full_name];
     }
 
     public function save(Request $request, ?string $account = null): JsonResponse
@@ -44,6 +44,7 @@ class MobileStaffAccountsController extends Controller
             $emailRules[] = Rule::unique((new $model)->getTable(), 'email')->ignore($user instanceof $model ? $user->id : null);
         }
         $data = $request->validate(['first_name' => ['required', 'string', 'max:60'], 'last_name' => ['required', 'string', 'max:60'], 'email' => $emailRules, 'contact_number' => MobileValidation::phoneRules(),
+            'phone_number' => ['exclude_unless:role,dispatcher', 'nullable', 'string', 'max:28', 'regex:/^\+?[0-9][0-9 ()-]{2,24}$/D'],
             'role' => ['required', 'in:resident,driver/responder,dispatcher,admin'], 'status' => ['required', 'in:active,inactive,suspended'],
             'password' => [$user ? 'prohibited' : 'required', 'string', 'min:8', 'max:128'], 'barangay' => ['nullable', 'string', 'max:120'], 'city' => ['nullable', 'string', 'max:120'], 'province' => ['nullable', 'string', 'max:120']]);
 

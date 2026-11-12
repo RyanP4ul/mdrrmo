@@ -8,6 +8,7 @@ use App\Models\IncidentType;
 use App\Services\DispatchService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 
 class DashboardController extends Controller
@@ -31,8 +32,20 @@ class DashboardController extends Controller
     /** Create (phone call) or dispatch (existing report). */
     public function store(Request $request)
     {
+        if ($request->filled('report_id')) {
+            $data = $request->validate([
+                'report_id' => ['required', 'integer', 'exists:emergency_reports,id'],
+            ]);
+
+            $report = EmergencyReport::findOrFail($data['report_id']);
+            Gate::authorize('dispatch', $report);
+
+            $report = $this->dispatch->dispatch($report);
+
+            return redirect()->route('dispatcher.reports.show', $report)->with('success', "Dispatched {$report->team->team_name}.");
+        }
+
         $data = $request->validate([
-            'report_id' => ['nullable', 'exists:emergency_reports,id'],
             'incident_type_id' => ['required', 'exists:incident_types,id'],
             'reporter_name' => ['required', 'string', 'max:120'],
             'reporter_contact' => ['required', 'string', 'max:30'],
@@ -46,18 +59,14 @@ class DashboardController extends Controller
         ]);
 
         $priority = IncidentType::find($data['incident_type_id'])->priority; // priority comes from the incident type
-        $fields = collect($data)->except('report_id')->all();
 
-        $report = DB::transaction(function () use ($data, $fields, $priority) {
-            if (isset($data['report_id'])) {
-                $report = EmergencyReport::findOrFail($data['report_id']);
-                $report->update($fields + ['priority' => $priority]);
-            } else {
-                $report = EmergencyReport::create($fields + [
-                    'reference' => EmergencyReport::generateReference(),
-                    'source' => 'emergency-call', 'priority' => $priority, 'description' => $data['description'] ?? '',
-                ]);
-            }
+        $report = DB::transaction(function () use ($data, $priority) {
+            $report = EmergencyReport::create($data + [
+                'reference' => EmergencyReport::generateReference(),
+                'source' => 'emergency-call',
+                'priority' => $priority,
+                'description' => $data['description'] ?? '',
+            ]);
 
             return $this->dispatch->dispatch($report);
         });

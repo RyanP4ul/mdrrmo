@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\EmergencyReport;
 use App\Models\ResponseTeam;
+use App\Models\ServiceSchedule;
 use App\Models\TeamMember;
 use Illuminate\Support\Facades\DB;
 
@@ -46,10 +47,18 @@ class AutomaticDispatch
                 ->where(fn ($q) => $q->whereJsonContains('specializations', $report->incidentType->name)->orWhereJsonContains('specializations', '*'))
                 ->orderBy('id')->lockForUpdate()->get();
             foreach ($teams as $team) {
+                if ($team->vehicles()->exists() && ! $team->vehicles()->where('status', '!=', 'maintenance')->exists()) {
+                    continue;
+                }
+                if (ServiceSchedule::where('response_team_id', $team->id)->whereIn('status', ['en-route', 'on-scene'])->exists()) {
+                    continue;
+                }
                 $member = TeamMember::where('response_team_id', $team->id)->where('status', 'active')
+                    ->when($team->member_roles_enabled, fn ($query) => $query->where('role', 'Driver'))
                     ->whereHas('user', fn ($q) => $q->where('status', 'active'))
                     ->whereHas('shifts', fn ($q) => $q->where('status', 'on-shift')->where('response_team_id', $team->id)->where('start_time', '<=', now())->where('end_time', '>', now()))
-                    ->orderBy('id')->get()->first(fn ($member) => ! EmergencyReport::where('assigned_driver_id', $member->user_id)->whereIn('status', ['acknowledged', 'dispatched'])->exists());
+                    ->orderBy('id')->get()->first(fn ($member) => ! EmergencyReport::where('assigned_driver_id', $member->user_id)->whereIn('status', ['acknowledged', 'dispatched'])->exists()
+                        && ! ServiceSchedule::whereIn('status', ['en-route', 'on-scene'])->whereHas('responders', fn ($query) => $query->whereKey($member->user_id))->exists());
                 if (! $member) {
                     continue;
                 }

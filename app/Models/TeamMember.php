@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class TeamMember extends Model
 {
-    protected $guarded = ['id'];
+    protected $guarded = ['id', 'driver_team_id'];
 
     public function shifts(): BelongsToMany
     {

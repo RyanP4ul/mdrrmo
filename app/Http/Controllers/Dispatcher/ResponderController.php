@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\DriverResponderUser;
 use App\Models\ResponseTeam;
 use App\Models\Shift;
+use App\Services\TeamRoles;
 use App\Support\Audit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -34,7 +35,13 @@ class ResponderController extends Controller
     public function store(Request $request)
     {
         $data = $this->validated($request);
-        DB::transaction(fn () => ResponseTeam::create(['team_name' => $data['team_name'], 'status' => $data['status']])->members()->createMany($data['members']));
+        DB::transaction(function () use ($data): void {
+            $team = ResponseTeam::create(['team_name' => $data['team_name'], 'status' => $data['status']]);
+            $team->members()->createMany($data['members']);
+            if (array_key_exists('driver_user_id', $data)) {
+                app(TeamRoles::class)->reassign($team, $data['driver_user_id']);
+            }
+        });
         Audit::record('CREATE_TEAM', "Created team {$data['team_name']}");
 
         return back()->with('success', 'Team created.');
@@ -45,6 +52,19 @@ class ResponderController extends Controller
         $data = $this->validated($request, $team);
         DB::transaction(function () use ($team, $data) {
             $lockedTeam = ResponseTeam::query()->lockForUpdate()->findOrFail($team->getKey());
+            if (array_key_exists('driver_user_id', $data)) {
+                $previousDriver = $lockedTeam->members()->whereRaw("LOWER(role) = 'driver'")->first();
+                if ($previousDriver?->user_id !== $data['driver_user_id']) {
+                    app(TeamRoles::class)->ensureIdle($lockedTeam);
+                    $lockedTeam->members()->whereRaw("LOWER(role) = 'driver'")->update(['role' => 'Responder']);
+                }
+            } elseif ($lockedTeam->member_roles_enabled) {
+                $currentDriver = $lockedTeam->members()->where('role', 'Driver')->first();
+                $retained = collect($data['members'])->contains(fn ($member) => ($member['id'] ?? null) === $currentDriver?->id && $member['user_id'] === $currentDriver?->user_id && ($member['status'] ?? 'active') === 'active');
+                if ($currentDriver && ! $retained) {
+                    app(TeamRoles::class)->ensureIdle($lockedTeam);
+                }
+            }
             $memberIds = collect($data['members'])->pluck('id')->filter()->unique()->values();
             $validMemberIds = $lockedTeam->members()
                 ->whereIn('id', $memberIds)
@@ -61,7 +81,14 @@ class ResponderController extends Controller
             $lockedTeam->members()->whereNotIn('id', $memberIds)->delete();
 
             foreach ($data['members'] as $m) {
+                if (! array_key_exists('driver_user_id', $data) && $lockedTeam->member_roles_enabled) {
+                    $current = $lockedTeam->members()->whereKey($m['id'] ?? 0)->first();
+                    $m['role'] = $current?->user_id === $m['user_id'] ? $current->role : 'Responder';
+                }
                 $lockedTeam->members()->updateOrCreate(['id' => $m['id'] ?? null], ['user_id' => $m['user_id'], 'name' => $m['name'], 'role' => $m['role'], 'status' => $m['status'] ?? 'active']);
+            }
+            if (array_key_exists('driver_user_id', $data)) {
+                app(TeamRoles::class)->reassign($lockedTeam, $data['driver_user_id']);
             }
         });
         Audit::record('UPDATE_TEAM', "Updated team {$data['team_name']}");
@@ -142,12 +169,30 @@ class ResponderController extends Controller
                 : ['prohibited'],
             'members.*.user_id' => ['required', 'integer', 'distinct', Rule::exists('drivers', 'id')],
             'members.*.status' => ['nullable', 'in:active,inactive,on-leave,off-duty'],
+            'driver_user_id' => ['sometimes', 'nullable', 'integer', Rule::exists('drivers', 'id')->where('status', 'active')],
         ]);
+
+        if (isset($data['driver_user_id'])) {
+            $data['driver_user_id'] = (int) $data['driver_user_id'];
+        }
+        foreach ($data['members'] as &$validatedMember) {
+            $validatedMember['user_id'] = (int) $validatedMember['user_id'];
+            if (isset($validatedMember['id'])) {
+                $validatedMember['id'] = (int) $validatedMember['id'];
+            }
+        }
+        unset($validatedMember);
+        if (isset($data['driver_user_id']) && ! collect($data['members'])->contains(fn ($member) => $member['user_id'] === $data['driver_user_id'] && ($member['status'] ?? 'active') === 'active')) {
+            throw ValidationException::withMessages(['driver_user_id' => 'Choose an active member of this team as Driver.']);
+        }
 
         $drivers = DriverResponderUser::query()->whereIn('id', array_column($data['members'], 'user_id'))->get()->keyBy('id');
         foreach ($data['members'] as &$member) {
             $member['name'] = $drivers[$member['user_id']]->full_name;
-            $member['role'] = 'Driver/Responder';
+            $existing = $team?->members()->whereKey($member['id'] ?? 0)->first();
+            $member['role'] = array_key_exists('driver_user_id', $data)
+                ? ($member['user_id'] === $data['driver_user_id'] ? 'Driver' : 'Responder')
+                : ($team?->member_roles_enabled && $existing?->user_id === $member['user_id'] ? $existing->role : ($team?->member_roles_enabled ? 'Responder' : 'Driver/Responder'));
         }
 
         return $data;

@@ -17,7 +17,6 @@ class MobileFilters
             'emergency_reports' => ['reference', 'location', 'description'],
             'service_schedules' => ['service_type', 'address', 'notes'],
             'resident_notifications', 'driver_notifications' => ['title', 'message'],
-            'announcements' => ['title', 'description', 'category'],
             'incident_types' => ['name', 'description'],
             'response_teams' => ['team_name'],
             'vehicles' => ['plate_number'],

@@ -3,30 +3,35 @@
 namespace App\Http\Controllers\Resident;
 
 use App\Http\Controllers\Controller;
-use App\Models\{Announcement, EmergencyReport, IncidentType, ResidentNotification, ServiceSchedule};
+use App\Models\EmergencyReport;
+use App\Models\IncidentType;
+use App\Models\ResidentNotification;
+use App\Models\ServiceSchedule;
+use App\Services\ServiceScheduleWorkflow;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
 class ResidentController extends Controller
-    {
+{
     public const SERVICES = ['Ambulance Standby', 'Medical Mission', 'Fire Safety Inspection', 'Disaster Drill', 'First Aid Training', 'Other'];
 
     public function dashboard(Request $request)
     {
         $u = $request->user();
+
         return Inertia::render('Resident/Dashboard', [
             'active' => $u->reports()->with('incidentType:id,name,color', 'team:id,team_name')->active()->latest('reported_at')->get(),
-            'announcements' => Announcement::latest()->limit(3)->get(['id', 'title', 'category', 'description', 'created_at']),
             'unread' => ResidentNotification::where('user_id', $u->id)->whereNull('read_at')->count(),
             'approved' => $u->registration_status === 'accepted',
         ]);
-}
+    }
 
     public function createReport()
     {
         return Inertia::render('Resident/Report', ['types' => IncidentType::orderBy('name')->get(['id', 'name', 'description'])]);
-}
+    }
 
     public function storeReport(Request $request)
     {
@@ -46,14 +51,14 @@ class ResidentController extends Controller
         ]);
 
         return redirect()->route('resident.history')->with('success', 'Report sent. Help is being arranged.');
-}
+    }
 
     public function history(Request $request)
     {
         return Inertia::render('Resident/History', [
             'reports' => $request->user()->reports()->with('incidentType:id,name,color', 'team:id,team_name')->latest('reported_at')->paginate(6)->withQueryString(),
         ]);
-}
+    }
 
     public function schedule(Request $request)
     {
@@ -61,40 +66,45 @@ class ResidentController extends Controller
             'services' => self::SERVICES,
             'schedules' => $request->user()->schedules()->latest()->paginate(6)->withQueryString(),
         ]);
-}
+    }
 
-    public function storeSchedule(Request $request)
+    public function storeSchedule(Request $request, ServiceScheduleWorkflow $workflow)
     {
         abort_unless($request->user()->registration_status === 'accepted', 403, 'Your account is awaiting approval.');
 
         $d = $request->validate([
-            'service_type' => ['required', 'in:' . implode(',', self::SERVICES)],
-            'preferred_date' => ['required', 'date', 'after_or_equal:today'], 'preferred_time' => ['required', 'date_format:H:i'],
+            'service_type' => ['required', 'in:'.implode(',', self::SERVICES)],
+            'preferred_date' => ['required', 'date_format:Y-m-d'], 'preferred_time' => ['required', 'date_format:H:i'],
             'address' => ['required', 'string', 'max:255'], 'notes' => ['nullable', 'string', 'max:1000'],
         ]);
-        $request->user()->schedules()->create($d);
+        if (Carbon::parse($d['preferred_date'].' '.$d['preferred_time'], config('mobile.timezone'))->isPast()) {
+            throw ValidationException::withMessages(['preferred_time' => 'Choose a future date and time.']);
+        }
+        $workflow->create($request->user(), $d);
 
         return back()->with('success', 'Request submitted. You will be notified once it is reviewed.');
-}
+    }
 
-    public function cancelSchedule(Request $request, ServiceSchedule $schedule)
+    public function cancelSchedule(Request $request, ServiceSchedule $schedule, ServiceScheduleWorkflow $workflow)
     {
-        Gate::authorize('cancel', $schedule);
-        $schedule->update(['status' => 'cancelled']);
+        abort_unless($request->user()->hasRole('resident') && $schedule->resident_id === $request->user()->id, 403);
+        $workflow->cancel($schedule, $request->user());
+
         return back()->with('success', 'Request cancelled.');
-}
+    }
 
     public function notifications(Request $request)
     {
         return Inertia::render('Resident/Notifications', [
             'items' => ResidentNotification::where('user_id', $request->user()->id)->latest()->paginate(10)->withQueryString(),
         ]);
-}
+    }
 
     public function markRead(Request $request, ?ResidentNotification $notification = null)
     {
         $q = ResidentNotification::where('user_id', $request->user()->id)->whereNull('read_at');
         ($notification ? $q->whereKey($notification->id) : $q)->update(['read_at' => now()]);
+
         return back();
-}
+    }
 }

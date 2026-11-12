@@ -3,10 +3,17 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\{Account, AdminUser, DispatcherUser, DriverResponderUser, ResidentNotification, ResidentUser, User};
+use App\Models\Account;
+use App\Models\AdminUser;
+use App\Models\DispatcherUser;
+use App\Models\DriverResponderUser;
+use App\Models\ResidentNotification;
+use App\Models\ResidentUser;
+use App\Models\User;
 use App\Support\Audit;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -24,7 +31,7 @@ class UserController extends Controller
             ->when($filters['emp_search'] ?? null, fn (Builder $query, string $search) => $query->where(function (Builder $query) use ($search): void {
                 $query->where('first_name', 'like', "%{$search}%")
                     ->orWhere('last_name', 'like', "%{$search}%")
-                    ->orWhere('contact_number', 'like', "%{$search}%");
+                    ->orWhere('contact_number', 'like', "%{$search}%")->orWhere('phone_number', 'like', "%{$search}%");
             }))
             ->orderBy('last_name')
             ->orderBy('id')
@@ -133,9 +140,6 @@ class UserController extends Controller
         return back()->with('success', "Registration {$decision}.");
     }
 
-    /**
-     * @return Builder
-     */
     private function employeeAccounts(): Builder
     {
         $columns = [
@@ -143,11 +147,11 @@ class UserController extends Controller
             'date_of_birth', 'sex', 'status', 'barangay', 'city', 'province',
             'id_type', 'id_document_path', 'registration_status',
         ];
-        $accounts = AdminUser::query()->select($columns)->selectRaw('? as role', ['admin'])
-            ->unionAll(DispatcherUser::query()->select($columns)->selectRaw('? as role', ['dispatcher']))
-            ->unionAll(DriverResponderUser::query()->select($columns)->selectRaw('? as role', ['driver/responder']));
+        $accounts = AdminUser::query()->select($columns)->selectRaw('? as role, NULL as phone_number', ['admin'])
+            ->unionAll(DispatcherUser::query()->select($columns)->selectRaw('? as role, phone_number', ['dispatcher']))
+            ->unionAll(DriverResponderUser::query()->select($columns)->selectRaw('? as role, NULL as phone_number', ['driver/responder']));
 
-        return \Illuminate\Support\Facades\DB::query()->fromSub($accounts, 'employee_accounts');
+        return DB::query()->fromSub($accounts, 'employee_accounts');
     }
 
     /**
@@ -178,6 +182,7 @@ class UserController extends Controller
             'middle_initial' => ['nullable', 'string', 'max:2'],
             'email' => $emailRules,
             'contact_number' => ['required', 'string', 'max:20'],
+            'phone_number' => ['exclude_unless:role,dispatcher', 'nullable', 'string', 'max:28', 'regex:/^\+?[0-9][0-9 ()-]{2,24}$/D'],
             'date_of_birth' => ['nullable', 'date'],
             'sex' => ['nullable', 'in:Male,Female'],
             'role' => ['required', 'in:admin,dispatcher,driver/responder,resident'],

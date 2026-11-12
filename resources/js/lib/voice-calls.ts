@@ -1,8 +1,16 @@
 export interface CallParticipant { account_key: string; role: string; uid: number }
 export interface CommunicationCall {
-  id: string; report_id: number; report_reference?: string; status: 'active' | 'ended' | 'expired';
+  id: string; queue_state?: 'waiting' | 'ringing' | 'active' | 'ended'; queue_position?: number | null; priority?: number; offered_dispatcher_key?: string | null; end_reason?: string | null; report_id: number | null; caller_type?: 'guest' | 'resident'; kind?: 'report' | 'sos'; accepted_at?: string | null; resident_name?: string | null; resident_contact?: string | null; resident_address?: string | null; report_reference?: string; status: 'active' | 'ended' | 'expired';
   participants: CallParticipant[]; expires_at: string; joinable: boolean;
 }
+/** Only alert dispatchers for live SOS offers that they can answer now. */
+export function incomingSosCalls(calls: CommunicationCall[], dispatcherKey: string, available: boolean): CommunicationCall[] {
+  if (!available) return [];
+  return calls.filter(call => call.kind === 'sos' && call.status === 'active' && call.joinable && !call.accepted_at
+    && call.queue_state !== 'waiting'
+    && (!call.offered_dispatcher_key || call.offered_dispatcher_key === dispatcherKey));
+}
+
 export interface CallCredentials { app_id: string; channel: string; uid: number; token: string; expires_at: string }
 export interface AudioTrack { setEnabled(enabled: boolean): Promise<void>; stop(): void; close(): void }
 interface RemoteUser { uid: number | string; audioTrack?: { play(): void }; hasAudio: boolean }
@@ -78,6 +86,8 @@ export class VoiceSession {
   private generation = 0;
   private renewing = false;
   private toggling = false;
+  private joinTimer?: ReturnType<typeof setTimeout>;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
   constructor(
     private changed: (state: VoiceState) => void,
     private credentials: (id: string) => Promise<CallCredentials>,
@@ -91,10 +101,11 @@ export class VoiceSession {
     const generation = ++this.generation;
     const current = () => generation === this.generation;
     this.update({ ...emptyState(), phase: 'joining', call });
+    this.joinTimer = setTimeout(() => { if (current()) void this.leave('The call connection timed out. Please retry.'); }, 30000);
     let client: VoiceClient | undefined;
     let track: AudioTrack | undefined;
     try {
-      const [sdk, credentials] = await Promise.all([this.sdk(), this.credentials(call.id)]);
+      const sdk = await this.sdk();
       if (!current()) return;
       client = sdk.createClient({ mode: 'rtc', codec: 'vp8' });
       this.client = client;
@@ -119,16 +130,24 @@ export class VoiceSession {
       rtc.on('connection-state-change', (state: string, _previous: string, reason?: string) => {
         if (!current()) return;
         if (state === 'DISCONNECTED' && reason) void this.leave('The call disconnected. You can try joining again.');
-        else if (state === 'RECONNECTING') this.update({ phase: 'reconnecting' });
-        else if (state === 'CONNECTED' && this.state.phase !== 'joining') this.update({ phase: 'connected' });
+        else if (state === 'RECONNECTING') {
+          this.update({ phase: 'reconnecting' });
+          this.reconnectTimer ??= setTimeout(() => { if (current()) void this.leave('The call disconnected. Please retry.'); }, 30000);
+        } else if (state === 'CONNECTED') {
+          clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined;
+          if (this.state.phase !== 'joining') this.update({ phase: 'connected' });
+        }
       });
       track = await sdk.createMicrophoneAudioTrack();
       if (!current()) { track.close(); return; }
       this.track = track;
+      const credentials = await this.credentials(call.id);
+      if (!current()) return;
       await rtc.join(credentials.app_id, credentials.channel, credentials.token, credentials.uid);
       if (!current()) { await rtc.leave(); return; }
       await rtc.publish(track);
       if (!current()) { await rtc.leave(); return; }
+      clearTimeout(this.joinTimer); this.joinTimer = undefined;
       this.update({ phase: 'connected', uid: credentials.uid, peers: rtc.remoteUsers.map(user => Number(user.uid)) });
     } catch (error) {
       if (current()) await this.leave(error instanceof Error ? error.message : 'Could not join. Allow microphone access and try again.');
@@ -152,6 +171,8 @@ export class VoiceSession {
 
   async leave(error: string | null = null): Promise<void> {
     ++this.generation;
+    clearTimeout(this.joinTimer); clearTimeout(this.reconnectTimer);
+    this.joinTimer = undefined; this.reconnectTimer = undefined;
     const client = this.client;
     const track = this.track;
     this.client = undefined; this.track = undefined;

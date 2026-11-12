@@ -24,29 +24,28 @@ export default defineConfig({
         tailwindcss(),
     ],
 
-	server: {
-		host: "0.0.0.0",
-		port: 5173,
-		strictPort: true,
+    server: {
+        host: "0.0.0.0",
+        port: 5173,
+        strictPort: true,
 
-		// Allow Laravel application to load Vite assets
-		cors: {
-			origin: [
-				"http://localhost:8000",
-				"http://127.0.0.1:8000",
-				"http://192.168.0.103:8000",
-			],
-		},
+        // Allow Laravel application to load Vite assets
+        cors: {
+            origin: [
+                "http://localhost:8000",
+                "http://127.0.0.1:8000",
+                "http://192.168.0.103:8000",
+            ],
+        },
 
-		hmr: {
-			host: "192.168.0.103",
-			protocol: "ws",
-			clientPort: 5173,
-		},
+        hmr: {
+            host: "localhost",
+            protocol: "ws",
+            clientPort: 5173,
+        },
 
-		watch: {
-			ignored: ["**/storage/framework/views/**"],
-		},
-	},
-
+        watch: {
+            ignored: ["**/storage/framework/views/**"],
+        },
+    },
 });

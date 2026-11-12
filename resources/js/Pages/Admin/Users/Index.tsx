@@ -21,7 +21,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Field } from "@/components/Field";
 import {
     Select,
     SelectContent,
@@ -57,6 +57,7 @@ interface U {
     middle_initial: string | null;
     email: string;
     contact_number: string | null;
+    phone_number?: string | null;
     date_of_birth: string | null;
     sex: string | null;
     role: string;
@@ -81,6 +82,7 @@ const blank = {
     middle_initial: "",
     email: "",
     contact_number: "",
+    phone_number: "",
     date_of_birth: "",
     sex: "",
     role: "dispatcher",
@@ -89,24 +91,6 @@ const blank = {
     city: "Meycauayan",
     province: "Bulacan",
 };
-const Field = ({
-    id,
-    label,
-    error,
-    children,
-}: {
-    id: string;
-    label: string;
-    error?: string;
-    children: React.ReactNode;
-}) => (
-    <div className="space-y-1.5">
-        <Label htmlFor={id}>{label}</Label>
-        {children}
-        {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
-);
-
 export default function Index({ employees, residents, filters }: Props) {
     const { values, set } = useServerFilters(
         {
@@ -122,6 +106,7 @@ export default function Index({ employees, residents, filters }: Props) {
     const [open, setOpen] = useState(false);
     const [del, setDel] = useState<U | null>(null);
     const [view, setView] = useState<U | null>(null);
+    const [decline, setDecline] = useState<U | null>(null);
     const form = useForm<typeof blank>(blank);
     const err = form.errors as Record<string, string>;
     const bind = (k: keyof typeof blank) => ({
@@ -220,8 +205,8 @@ export default function Index({ employees, residents, filters }: Props) {
                                     <TableHeader>
                                         <TableRow>
                                             <TableHead>Name</TableHead>
-                                            <TableHead>Email</TableHead>
-                                            <TableHead>Contact</TableHead>
+                                            <TableHead className="hidden md:table-cell">Email</TableHead>
+                                            <TableHead className="hidden sm:table-cell">Contact</TableHead>
                                             <TableHead>Role</TableHead>
                                             <TableHead>Status</TableHead>
                                             <TableHead className="w-28 text-center">
@@ -235,10 +220,10 @@ export default function Index({ employees, residents, filters }: Props) {
                                                 <TableCell className="font-medium">
                                                     {u.full_name}
                                                 </TableCell>
-                                                <TableCell className="text-muted-foreground">
+                                                <TableCell className="hidden text-muted-foreground md:table-cell">
                                                     {u.email}
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell className="hidden sm:table-cell">
                                                     {u.contact_number}
                                                 </TableCell>
                                                 <TableCell className="capitalize">
@@ -309,8 +294,8 @@ export default function Index({ employees, residents, filters }: Props) {
                                     <TableHeader>
                                         <TableRow>
                                             <TableHead>Name</TableHead>
-                                            <TableHead>Barangay</TableHead>
-                                            <TableHead>Contact</TableHead>
+                                            <TableHead className="hidden md:table-cell">Barangay</TableHead>
+                                            <TableHead className="hidden sm:table-cell">Contact</TableHead>
                                             <TableHead>Registration</TableHead>
                                             <TableHead className="w-40 text-center">
                                                 Actions
@@ -324,10 +309,10 @@ export default function Index({ employees, residents, filters }: Props) {
                                                     {u.last_name},{" "}
                                                     {u.first_name}
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell className="hidden md:table-cell">
                                                     {u.barangay}
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell className="hidden sm:table-cell">
                                                     {u.contact_number}
                                                 </TableCell>
                                                 <TableCell>
@@ -356,7 +341,7 @@ export default function Index({ employees, residents, filters }: Props) {
                                                                 variant="ghost"
                                                                 size="icon"
                                                                 aria-label="Accept"
-                                                                className="text-emerald-600"
+                                                                className="text-ok"
                                                                 onClick={() =>
                                                                     review(
                                                                         u,
@@ -372,10 +357,7 @@ export default function Index({ employees, residents, filters }: Props) {
                                                                 aria-label="Decline"
                                                                 className="text-destructive"
                                                                 onClick={() =>
-                                                                    review(
-                                                                        u,
-                                                                        "declined",
-                                                                    )
+                                                                    setDecline(u)
                                                                 }
                                                             >
                                                                 <X className="size-4" />
@@ -406,7 +388,7 @@ export default function Index({ employees, residents, filters }: Props) {
             </Tabs>
 
             <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="sm:max-w-xl">
+                <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
                     <DialogHeader>
                         <DialogTitle>
                             {editing ? "Edit employee" : "Add employee"}
@@ -419,46 +401,50 @@ export default function Index({ employees, residents, filters }: Props) {
                     </DialogHeader>
                     <div className="grid gap-3 sm:grid-cols-2">
                         <Field
-                            id="first_name"
-                            label="First name *"
+                            htmlFor="first_name"
+                            label="First name" required
                             error={err.first_name}
                         >
                             <Input
                                 type="text"
-                                placeholder="Enter First Name"
+                                autoComplete="given-name"
                                 {...bind("first_name")}
                             />
                         </Field>
                         <Field
-                            id="last_name"
-                            label="Last name *"
+                            htmlFor="last_name"
+                            label="Last name" required
                             error={err.last_name}
                         >
                             <Input
                                 type="text"
-                                placeholder="Enter Last Name"
+                                autoComplete="family-name"
                                 {...bind("last_name")}
                             />
                         </Field>
-                        <Field id="email" label="Email *" error={err.email}>
+                        <Field htmlFor="email" label="Email" required error={err.email}>
                             <Input
                                 type="email"
-                                placeholder="Enter Email"
+                                autoComplete="off"
                                 {...bind("email")}
                             />
                         </Field>
                         <Field
-                            id="contact_number"
-                            label="Contact *"
+                            htmlFor="contact_number"
+                            label="Contact" required
                             error={err.contact_number}
                         >
                             <Input
                                 type="text"
-                                placeholder="Enter Contact Number"
+                                inputMode="tel"
                                 {...bind("contact_number")}
                             />
                         </Field>
-                        <Field id="role" label="Role">
+                        {form.data.role === "dispatcher" && <Field htmlFor="phone_number" label="Dispatcher SOS phone number" error={err.phone_number}>
+                            <Input type="tel" maxLength={28} {...bind("phone_number")} />
+                            <p className="text-xs text-muted-foreground">Residents and guests use this public number for regular phone calls. Include the country or area code.</p>
+                        </Field>}
+                        <Field htmlFor="role" label="Role">
                             <Select
                                 value={form.data.role}
                                 disabled={!!editing}
@@ -490,7 +476,7 @@ export default function Index({ employees, residents, filters }: Props) {
                                 </p>
                             )}
                         </Field>
-                        <Field id="status" label="Status">
+                        <Field htmlFor="status" label="Status">
                             <Select
                                 value={form.data.status}
                                 onValueChange={(v) => form.setData("status", v)}
@@ -537,6 +523,7 @@ export default function Index({ employees, residents, filters }: Props) {
                     <dl className="space-y-1.5 text-sm">
                         {[
                             ["Contact", view?.contact_number],
+                            ...(view?.role === "dispatcher" ? [["SOS phone", view?.phone_number]] : []),
                             ["Birth date", view?.date_of_birth?.slice(0, 10)],
                             ["Sex", view?.sex],
                             [
@@ -559,6 +546,18 @@ export default function Index({ employees, residents, filters }: Props) {
                     </dl>
                 </DialogContent>
             </Dialog>
+
+            <ConfirmDialog
+                open={!!decline}
+                onOpenChange={(o) => !o && setDecline(null)}
+                title="Decline registration"
+                description={`${decline?.full_name}'s registration will be declined and they will not be able to report or book services.`}
+                confirmLabel="Decline"
+                onConfirm={() => {
+                    review(decline!, "declined");
+                    setDecline(null);
+                }}
+            />
 
             <ConfirmDialog
                 open={!!del}

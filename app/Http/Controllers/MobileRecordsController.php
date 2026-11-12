@@ -9,7 +9,9 @@ use App\Models\DriverNotification;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
 use App\Models\ReportForm;
+use App\Models\ServiceSchedule;
 use App\Services\EmergencyReportWorkflow;
+use App\Services\ServiceScheduleWorkflow;
 use App\Support\Audit;
 use App\Support\MobilePage;
 use Carbon\Carbon;
@@ -30,7 +32,12 @@ class MobileRecordsController extends Controller
             ->where(function ($query) use ($user): void {
                 $query->where(fn ($owner) => $owner->where('reported_by', $user->getKey())->where('reported_by_type', $user->getMorphClass()));
                 if ($user->hasRole('driver/responder')) {
-                    $query->orWhere('assigned_driver_id', $user->getKey());
+                    $query->orWhere('assigned_driver_id', $user->getKey())
+                        ->orWhereHas('team', fn ($team) => $team
+                            ->where('status', 'active')
+                            ->whereHas('members', fn ($member) => $member
+                                ->where('user_id', $user->getKey())
+                                ->where('status', 'active')));
                 }
             })->when($lock, fn ($query) => $query->lockForUpdate())->firstOrFail();
     }
@@ -42,8 +49,11 @@ class MobileRecordsController extends Controller
 
     private function reportData(Request $request, EmergencyReport $report): array
     {
-        $report->load(['incidentType', 'driver', 'team.vehicles']);
+        $report->load(['incidentType', 'driver', 'team.vehicles', 'team.members.user', 'form']);
         $canCare = $request->user()->hasRole('driver/responder') && Gate::allows('updateAsDriver', $report);
+        $canEditTrip = $request->user()->hasRole('driver/responder') && Gate::allows('editTripAsDriver', $report);
+        $trip = DispatchTrip::where('emergency_report_id', $report->id)->first();
+        $authorizedPassenger = $this->resolveAuthorizedPassenger($report);
 
         return [
             'id' => $report->id, 'reference' => $report->reference,
@@ -54,7 +64,9 @@ class MobileRecordsController extends Controller
             'reporter_type' => $report->reporter_type,
             'submitted_patient' => $request->user()->hasRole('driver/responder') ? $report->victim_info : null,
             'driver' => $report->driver?->full_name, 'team' => $report->team?->team_name,
-            'vehicle' => $report->team?->vehicles->firstWhere('assigned_report_id', $report->id)?->plate_number ?? DispatchTrip::where('emergency_report_id', $report->id)->value('vehicle_number'),
+            'vehicle' => $report->team?->vehicles->firstWhere('assigned_report_id', $report->id)?->plate_number ?? $trip?->vehicle_number,
+            'authorized_passenger' => $request->user()->hasRole('driver/responder') ? $authorizedPassenger : null,
+            'driver_form' => $canCare ? ($report->form?->driver_section ?: null) : null,
             'reported_at' => $report->reported_at?->toIso8601String(),
             'acknowledged_at' => $report->acknowledged_at?->toIso8601String(),
             'resolved_at' => $report->resolved_at?->toIso8601String(),
@@ -62,8 +74,31 @@ class MobileRecordsController extends Controller
             'revision' => $this->revision($report),
             'can_edit' => $request->user()->hasRole('resident') && $report->status === 'pending',
             'can_care' => $canCare,
-            'trip' => $canCare ? DispatchTrip::where('emergency_report_id', $report->id)->first() : null,
+            'can_fill_patient_form' => $canCare,
+            'can_edit_trip' => $canEditTrip,
+            'trip' => $canCare ? $trip : null,
         ];
+    }
+
+    private function resolveAuthorizedPassenger(EmergencyReport $report): string
+    {
+        $existing = trim((string) ($report->form?->driver_section['authorizedPassenger'] ?? $report->form?->driver_section['passengerName'] ?? ''));
+        if ($existing !== '') {
+            return $existing;
+        }
+        $patientName = trim((string) (($report->victim_info['name'] ?? null) ?: $report->reporter_name ?: ''));
+        $responders = $report->team?->members
+            ? $report->team->members
+                ->where('status', 'active')
+                ->filter(fn ($m) => ($m->role ?? '') !== 'Driver' && $m->user_id !== $report->assigned_driver_id)
+                ->map(fn ($m) => trim((string) ($m->user?->full_name ?? $m->name)))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all()
+            : [];
+
+        return collect([$patientName, ...$responders])->filter()->unique()->implode(', ');
     }
 
     public function updateReport(Request $request, int $report): JsonResponse
@@ -112,12 +147,74 @@ class MobileRecordsController extends Controller
 
     public function schedule(Request $request, int $schedule): JsonResponse
     {
-        $record = $request->user()->schedules()->findOrFail($schedule);
+        $record = $request->user()->schedules()->with('team:id,team_name')->findOrFail($schedule);
 
-        return response()->json(array_replace($record->toArray(), ['preferred_time' => Carbon::parse($record->preferred_time)->format('H:i')]) + ['can_edit' => $record->status === 'pending', 'revision' => $this->revision($record)]);
+        return response()->json(array_replace($record->toArray(), ['preferred_time' => Carbon::parse($record->preferred_time)->format('H:i')]) + ['team_name' => $record->team?->team_name, 'can_edit' => $record->status === 'pending', 'revision' => $this->revision($record)]);
     }
 
-    public function updateSchedule(Request $request, int $schedule): JsonResponse
+    public function driverSchedule(Request $request, int $schedule): JsonResponse
+    {
+        $record = ServiceSchedule::query()
+            ->whereHas('responders', fn ($query) => $query->whereKey($request->user()->id))
+            ->with(['resident:id,first_name,last_name,contact_number', 'team:id,team_name'])
+            ->findOrFail($schedule);
+
+        return response()->json($this->assignedScheduleData($record));
+    }
+
+    private function assignedScheduleData(ServiceSchedule $record): array
+    {
+        return [
+            'id' => $record->getKey(),
+            'service_type' => $record->service_type,
+            'status' => $record->status,
+            'address' => $record->address,
+            'preferred_date' => $record->preferred_date->toDateString(),
+            'preferred_time' => Carbon::parse($record->preferred_time)->format('H:i'),
+            'notes' => $record->notes,
+            'resident' => $record->resident->full_name,
+            'contact' => $record->resident->contact_number,
+            'team_name' => $record->team?->team_name,
+            'started_at' => $record->started_at, 'arrived_at' => $record->arrived_at, 'completed_at' => $record->completed_at,
+        ];
+    }
+
+    public function driverSchedules(Request $request): JsonResponse
+    {
+        $filters = $request->validate([
+            'today' => ['nullable', 'boolean'],
+            'active' => ['nullable', 'boolean'],
+        ]);
+
+        return response()->json(MobilePage::make(
+            ServiceSchedule::query()
+                ->with(['resident:id,first_name,last_name,contact_number', 'team:id,team_name'])
+                ->whereHas('responders', fn ($query) => $query->whereKey($request->user()->id))
+                ->when($filters['active'] ?? false, fn ($query) => $query->whereIn('status', ServiceSchedule::ACTIVE_STATUSES))
+                ->when($filters['today'] ?? false, fn ($query) => $query
+                    ->whereDate('preferred_date', Carbon::today(config('mobile.timezone'))->toDateString())
+                    ->whereIn('status', ServiceSchedule::ACTIVE_STATUSES)),
+            fn (ServiceSchedule $record): array => $this->assignedScheduleData($record),
+            $request,
+        ));
+    }
+
+    public function completeDriverSchedule(Request $request, int $schedule, ServiceScheduleWorkflow $workflow): JsonResponse
+    {
+        $record = $workflow->progress(ServiceSchedule::findOrFail($schedule), $request->user(), 'completed');
+
+        return response()->json(['id' => $record->id, 'status' => $record->status]);
+    }
+
+    public function progressDriverSchedule(Request $request, int $schedule, ServiceScheduleWorkflow $workflow): JsonResponse
+    {
+        $data = $request->validate(['status' => ['required', 'in:en-route,on-scene,completed']]);
+        $record = $workflow->progress(ServiceSchedule::findOrFail($schedule), $request->user(), $data['status']);
+
+        return response()->json(['id' => $record->id, 'status' => $record->status]);
+    }
+
+    public function updateSchedule(Request $request, int $schedule, ServiceScheduleWorkflow $workflow): JsonResponse
     {
         $data = $request->validate([
             'revision' => ['required', 'string'],
@@ -131,11 +228,12 @@ class MobileRecordsController extends Controller
             throw ValidationException::withMessages(['preferred_time' => 'Choose a future date and time.']);
         }
 
-        return DB::transaction(function () use ($request, $schedule, $data): JsonResponse {
+        return DB::transaction(function () use ($request, $schedule, $data, $workflow): JsonResponse {
             $record = $request->user()->schedules()->whereKey($schedule)->lockForUpdate()->firstOrFail();
             abort_unless($record->status === 'pending', 422, 'Only pending requests can be edited.');
             $this->checkRevision($record, $data['revision']);
             unset($data['revision']);
+            $workflow->validateResidentSlot($request->user(), $data, $record->id);
             $record->update($data);
             Audit::record('UPDATE_SCHEDULE', "Resident edited schedule {$record->id}");
 
@@ -165,10 +263,24 @@ class MobileRecordsController extends Controller
 
     public function patient(Request $request, EmergencyReport $report): JsonResponse
     {
-        abort_unless($report->assigned_driver_id === $request->user()->getKey(), 404);
-        Gate::authorize('updateAsDriver', $report);
+        abort_unless(Gate::allows('updateAsDriver', $report), 404);
+        $report->loadMissing(['incidentType', 'driver', 'team.vehicles', 'team.members.user', 'trip', 'form']);
+        $teamVehicle = $report->team?->vehicles->firstWhere('assigned_report_id', $report->id)
+            ?? $report->team?->resolveActiveVehicle();
 
-        return response()->json(['form' => $report->form, 'revision' => $report->form ? $this->revision($report->form) : 'new', 'type' => $report->incidentType?->name]);
+        return response()->json([
+            'form' => $report->form,
+            'revision' => $report->form ? $this->revision($report->form) : 'new',
+            'type' => $report->incidentType?->name,
+            'defaults' => [
+                'tripDate' => ($report->reported_at ?? now())->toDateString(),
+                'driverName' => $report->driver?->full_name ?? $request->user()?->full_name,
+                'governmentCardPlateNo' => $teamVehicle?->plate_number ?? $report->trip?->vehicle_number,
+                'authorizedPassenger' => $this->resolveAuthorizedPassenger($report),
+                'placeVisitedInspected' => $report->trip?->destination ?: $report->location,
+                'purpose' => 'Emergency Response - '.($report->incidentType?->name ?? 'Emergency'),
+            ],
+        ]);
     }
 
     public function savePatient(SavePatientReportRequest $request, EmergencyReport $report): JsonResponse
@@ -179,10 +291,23 @@ class MobileRecordsController extends Controller
             $revision = $request->validate(['revision' => ['required', 'string']])['revision'];
             $existing = $record->form;
             abort_unless($revision === ($existing ? $this->revision($existing) : 'new'), 409, 'The patient form changed. Reload it before saving.');
-            $form = ReportForm::updateOrCreate(['emergency_report_id' => $record->id], $request->safe()->only(['driver_section', 'emergency_section']));
+            $validated = $request->safe()->only(['driver_section', 'emergency_section']);
+            $driverSection = array_key_exists('driver_section', $validated) && is_array($validated['driver_section'])
+                ? array_merge($existing?->driver_section ?? [], $validated['driver_section'])
+                : ($existing?->driver_section ?? []);
+            $emergencySection = array_key_exists('emergency_section', $validated) && is_array($validated['emergency_section'])
+                ? array_merge($existing?->emergency_section ?? [], $validated['emergency_section'])
+                : ($existing?->emergency_section ?? []);
+            $form = ReportForm::updateOrCreate(
+                ['emergency_report_id' => $record->id],
+                [
+                    'driver_section' => $driverSection,
+                    'emergency_section' => $emergencySection,
+                ],
+            );
             Audit::record('UPDATE_PATIENT_REPORT', "Driver saved patient form {$record->reference}");
 
-            return response()->json(['form' => $form]);
+            return response()->json(['form' => $form, 'revision' => $this->revision($form)]);
         });
     }
 
@@ -203,8 +328,8 @@ class MobileRecordsController extends Controller
 
         return DB::transaction(function () use ($request, $report, $data): JsonResponse {
             $record = EmergencyReport::whereKey($report->id)->lockForUpdate()->firstOrFail();
-            abort_unless($record->assigned_driver_id === $request->user()->getKey(), 404);
-            Gate::authorize('updateAsDriver', $record);
+            abort_unless(Gate::allows('updateAsDriver', $record), 404);
+            Gate::authorize('editTripAsDriver', $record);
             foreach (['picked_up_at', 'arrived_at'] as $field) {
                 $data[$field] = empty($data[$field]) ? null : Carbon::parse($data[$field])->utc();
             }

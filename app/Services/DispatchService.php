@@ -11,6 +11,7 @@ use App\Models\Hospital;
 use App\Models\ResidentNotification;
 use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
+use App\Models\ServiceSchedule;
 use App\Models\TeamMember;
 use App\Support\Audit;
 use Illuminate\Support\Facades\DB;
@@ -37,8 +38,13 @@ class DispatchService
         }
 
         $now = now();
+        $hasUsableVehicle = fn ($q) => $q->whereDoesntHave('vehicles')
+            ->orWhereHas('vehicles', fn ($v) => $v->where('status', '!=', 'maintenance'));
+
         $onShift = ResponseTeam::where('status', 'active')
-            ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active')))
+            ->where($hasUsableVehicle)
+            ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active'))
+                ->where(fn ($role) => $role->where('response_teams.member_roles_enabled', false)->orWhere('role', 'Driver')))
             ->when($activeTeamIds !== null, fn ($q) => $q->whereIn('id', $activeTeamIds))
             ->whereHas('shifts', fn ($q) => $q->where('status', 'on-shift')
                 ->where('start_time', '<=', $now)
@@ -54,7 +60,9 @@ class DispatchService
         }
 
         return ResponseTeam::where('status', 'active')
-            ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active')))
+            ->where($hasUsableVehicle)
+            ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active'))
+                ->where(fn ($role) => $role->where('response_teams.member_roles_enabled', false)->orWhere('role', 'Driver')))
             ->when($activeTeamIds !== null, fn ($q) => $q->whereIn('id', $activeTeamIds))
             ->withCount(['reports as busy_count' => $busy])
             ->orderBy('busy_count')
@@ -96,19 +104,27 @@ class DispatchService
                 ]);
             }
 
+            if ($team->vehicles()->exists() && ! $team->vehicles()->where('status', '!=', 'maintenance')->exists()) {
+                throw ValidationException::withMessages([
+                    'team' => 'All vehicles assigned to this team are currently under maintenance.',
+                ]);
+            }
+
             $driver = $this->onShiftMembers($team)->first(
                 fn ($member) => $member->user_id
+                    && (! $team->member_roles_enabled || $member->role === 'Driver')
                     && $member->status === 'active'
                     && $member->user?->status === 'active',
             ) ?? $team->members()
                 ->where('status', 'active')
+                ->when($team->member_roles_enabled, fn ($query) => $query->where('role', 'Driver'))
                 ->whereNotNull('user_id')
                 ->whereHas('user', fn ($query) => $query->where('status', 'active'))
                 ->first();
 
             if (! $driver) {
                 throw ValidationException::withMessages([
-                    'team' => 'This team has no active linked driver/responder. Edit its roster and select an active driver/responder account.',
+                    'team' => 'This team has no available Driver. Select an active Driver in the team roster or mobile Team page.',
                 ]);
             }
             if (! $selectedDriver) {
@@ -116,10 +132,16 @@ class DispatchService
             }
             if ($selectedDriver) {
                 $driver = $team->members()->whereKey($selectedDriver->id)->where('status', 'active')->firstOrFail();
+                abort_if($team->member_roles_enabled && $driver->role !== 'Driver', 422, 'Select the current team Driver.');
                 $account = DriverResponderUser::whereKey($driver->user_id)->where('status', 'active')->lockForUpdate()->firstOrFail();
                 abort_if(EmergencyReport::where('assigned_driver_id', $account->id)->whereIn('status', ['acknowledged', 'dispatched'])->where('id', '!=', $lockedReport->id)->exists(), 422, 'This driver has an active assignment.');
             }
             $previousDriverId = $lockedReport->assigned_driver_id;
+            if (ServiceSchedule::whereIn('status', ['en-route', 'on-scene'])
+                ->where(fn ($query) => $query->where('response_team_id', $team->id)
+                    ->orWhereHas('responders', fn ($query) => $query->whereKey($driver->user_id)))->exists()) {
+                throw ValidationException::withMessages(['team' => 'This team or driver is handling a scheduled service.']);
+            }
             $lockedReport->update([
                 'response_team_id' => $team->getKey(),
                 'assigned_driver_id' => $driver?->user_id,

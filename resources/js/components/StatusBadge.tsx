@@ -1,37 +1,42 @@
-import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 /**
- * ONE semantic palette for the whole app.
- * (Previously each page had its own map: "high" was blue in one table and red in another,
- *  "low" and "medium" were both yellow, etc.)
+ * ONE semantic vocabulary for every status and priority in the app.
+ * Colour is never decorative: critical = needs action now, warning = waiting / attention,
+ * ok = done or healthy, info = in progress, neutral = inactive or closed.
+ * Every badge also carries a text label, so colour is never the only signal.
  */
 const tone = {
-  neutral: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-  info:    'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300',
-  success: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
-  warning: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
-  orange:  'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300',
-  danger:  'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
-  violet:  'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300',
+  neutral:  'bg-muted text-muted-foreground',
+  info:     'bg-info-soft text-info',
+  success:  'bg-ok-soft text-ok',
+  warning:  'bg-warning-soft text-warning',
+  danger:   'bg-critical-soft text-critical',
+  critical: 'bg-critical text-white',
+  brand:    'bg-primary/10 text-primary',
 } as const;
 
 const map: Record<string, keyof typeof tone> = {
   // priority
-  low: 'success', medium: 'warning', high: 'orange', critical: 'danger',
+  low: 'neutral', medium: 'warning', high: 'danger', critical: 'critical',
   // report status
-  pending: 'warning', acknowledged: 'info', dispatched: 'violet', resolved: 'success', invalid: 'neutral',
+  pending: 'warning', acknowledged: 'info', dispatched: 'brand', resolved: 'success', invalid: 'neutral',
   // team / member status
-  active: 'success', inactive: 'danger', 'on-leave': 'warning', 'off-duty': 'neutral',
-  // schedule
-  confirmed: 'success', declined: 'danger', completed: 'info', cancelled: 'neutral',
+  active: 'success', inactive: 'neutral', suspended: 'danger', accepted: 'success', 'on-leave': 'warning', 'off-duty': 'neutral',
+  // schedule / assignment
+  confirmed: 'success', declined: 'danger', completed: 'success', cancelled: 'neutral', 'en-route': 'brand', 'on-scene': 'info',
+  // vehicle / maintenance
+  available: 'success', offline: 'neutral', maintenance: 'warning', 'in-maintenance': 'warning', in_maintenance: 'warning',
+  approved: 'info', rejected: 'danger', returning: 'info',
 };
 
 export function StatusBadge({ value, className }: { value: string; className?: string }) {
+  const key = map[value] ?? 'neutral';
   return (
-    <Badge variant="outline" className={cn('border-0 font-medium capitalize', tone[map[value] ?? 'neutral'], className)}>
-      {value.replace(/-/g, ' ')}
-    </Badge>
+    <span className={cn('inline-flex h-5 items-center gap-1.5 rounded-sm px-1.5 text-xs font-medium whitespace-nowrap capitalize', tone[key], className)}>
+      {key !== 'critical' && <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />}
+      {value.replace(/[-_]/g, ' ')}
+    </span>
   );
 }
 

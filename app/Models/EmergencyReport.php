@@ -71,6 +71,22 @@ class EmergencyReport extends Model
         return $q->whereIn('status', ['pending', 'acknowledged', 'dispatched']);
     }
 
+    public function scopeWithDriverForm($query)
+    {
+        return $query->whereHas('form', fn ($form) => $form->where(function ($section) {
+            foreach ([
+                'tripDate', 'driverName', 'governmentCardPlateNo', 'authorizedPassenger',
+                'passengerName', 'placeVisitedInspected', 'purpose', 'balanceInTank',
+                'issuedByOffice', 'purchasedDuringTrip', 'totalAvailableFuel',
+                'fuelUsedDuringTrip', 'remainingFuel', 'gearOilUsed',
+            ] as $field) {
+                $section->orWhere(fn ($value) => $value
+                    ->whereNotNull('driver_section->'.$field)
+                    ->where('driver_section->'.$field, '!=', ''));
+            }
+        }));
+    }
+
     public function scopeFilter($q, array $f)
     {
         return $q

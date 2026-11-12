@@ -42,12 +42,12 @@ export interface MapReport {
 }
 
 const statusRing: Record<string, string> = {
-    "en-route": "bg-amber-500",
-    "on-scene": "bg-red-600",
-    dispatched: "bg-amber-600",
-    available: "bg-emerald-600",
-    returning: "bg-sky-600",
-    offline: "bg-slate-400",
+    "en-route": "bg-primary",
+    "on-scene": "bg-info",
+    dispatched: "bg-primary",
+    available: "bg-ok",
+    returning: "bg-warning",
+    offline: "bg-muted-foreground",
 };
 
 function DriverMapCamera({ drivers, selectedId }: { drivers: MapDriver[]; selectedId?: number | null }) {
@@ -148,8 +148,8 @@ export function DriverMap({
                             <MarkerContent>
                                 <div
                                     className={cn(
-                                        "grid size-9 place-items-center rounded-full border-2 border-white text-white shadow-lg transition-transform",
-                                        statusRing[v.status] ?? "bg-slate-500",
+                                        "grid size-9 place-items-center rounded-full border-2 border-white text-white shadow-md transition-transform",
+                                        statusRing[v.status] ?? "bg-muted-foreground",
                                         v.id === selectedId &&
                                             "scale-125 ring-4 ring-primary/40",
                                     )}

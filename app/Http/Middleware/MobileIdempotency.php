@@ -15,7 +15,9 @@ class MobileIdempotency
         $key = $request->header('Idempotency-Key');
         validator(['submission_key' => $key], ['submission_key' => ['required', 'uuid']])->validate();
         $user = $request->user();
-        $identity = $user ? $user->getMorphClass().':'.$user->getKey() : 'registration:'.strtolower((string) $request->input('email'));
+        $identity = $request->routeIs('api.guest.reports.store')
+            ? 'guest-report'
+            : ($user ? $user->getMorphClass().':'.$user->getKey() : 'registration:'.strtolower((string) $request->input('email')));
         $scope = hash('sha256', $identity);
         $payload = $request->all();
         ksort($payload);

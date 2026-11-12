@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Events\EmergencyReportUpdated;
 use App\Events\VehicleLocationUpdated;
 use App\Models\DispatcherUser;
+use App\Models\DriverNotification;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
 use App\Models\Hospital;
@@ -166,6 +167,79 @@ class WebsiteImprovementTest extends TestCase
             ->get(route('dispatcher.schedule.index', ['month' => '2026-13']))
             ->assertRedirect()
             ->assertSessionHasErrors('month');
+    }
+
+    public function test_dispatcher_confirms_a_schedule_with_a_selected_team_and_notifies_both_sides(): void
+    {
+        $dispatcher = DispatcherUser::factory()->create();
+        $resident = ResidentUser::factory()->accepted()->create();
+        $team = ResponseTeam::create(['team_name' => 'Team Alpha', 'status' => 'active']);
+        $drivers = DriverResponderUser::factory()->count(2)->create();
+        foreach ($drivers as $driver) {
+            TeamMember::create([
+                'response_team_id' => $team->getKey(),
+                'user_id' => $driver->getKey(),
+                'name' => $driver->full_name,
+                'status' => 'active',
+            ]);
+        }
+        $schedule = $resident->schedules()->create([
+            'service_type' => 'Ambulance Standby',
+            'preferred_date' => now()->addDay()->toDateString(),
+            'preferred_time' => '09:00',
+            'address' => 'Municipal Hall',
+            'status' => 'pending',
+        ]);
+
+        $this->actingAs($dispatcher)
+            ->patch(route('dispatcher.schedule.acknowledge', $schedule), ['team_id' => $team->getKey()])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('service_schedules', [
+            'id' => $schedule->getKey(),
+            'status' => 'confirmed',
+            'response_team_id' => $team->getKey(),
+        ]);
+        $this->assertDatabaseCount('driver_notifications', 2);
+        foreach ($drivers as $driver) {
+            $this->assertDatabaseHas('driver_notifications', [
+                'driver_id' => $driver->getKey(),
+                'schedule_id' => $schedule->getKey(),
+                'kind' => 'schedule_assigned',
+            ]);
+        }
+        $this->assertDatabaseHas('resident_notifications', [
+            'user_id' => $resident->getKey(),
+            'type' => 'schedule_confirmed',
+            'related_id' => $schedule->getKey(),
+            'message' => 'Your Ambulance Standby on '.$schedule->preferred_date->toFormattedDateString().' is confirmed. Team Alpha has been assigned.',
+        ]);
+    }
+
+    public function test_dispatcher_cannot_confirm_a_schedule_for_a_team_without_an_active_responder(): void
+    {
+        $dispatcher = DispatcherUser::factory()->create();
+        $resident = ResidentUser::factory()->accepted()->create();
+        $team = ResponseTeam::create(['team_name' => 'Empty Team', 'status' => 'active']);
+        $schedule = $resident->schedules()->create([
+            'service_type' => 'Ambulance Standby',
+            'preferred_date' => now()->addDay()->toDateString(),
+            'preferred_time' => '09:00',
+            'address' => 'Municipal Hall',
+            'status' => 'pending',
+        ]);
+
+        $this->actingAs($dispatcher)
+            ->patch(route('dispatcher.schedule.acknowledge', $schedule), ['team_id' => $team->getKey()])
+            ->assertSessionHasErrors('team_id');
+
+        $this->assertDatabaseHas('service_schedules', [
+            'id' => $schedule->getKey(),
+            'status' => 'pending',
+            'response_team_id' => null,
+        ]);
+        $this->assertSame(0, DriverNotification::count());
+        $this->assertDatabaseCount('resident_notifications', 0);
     }
 
     public function test_shift_creation_rejects_members_from_another_response_team(): void

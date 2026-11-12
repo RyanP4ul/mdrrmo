@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { VoiceSession } from '../../resources/js/lib/voice-calls.ts';
+import { VoiceSession, incomingSosCalls } from '../../resources/js/lib/voice-calls.ts';
 
 const call = { id: 'call-1', report_id: 1, status: 'active', joinable: true, participants: [] };
 const credentials = { app_id: 'public-id', channel: 'server-channel', uid: 2, token: 'secret-token' };
@@ -104,4 +104,63 @@ test('remote audio is subscribed and played and reconnection status is visible',
   events['connection-state-change']('CONNECTED');
   assert.equal(session.state.phase, 'connected');
   await session.leave();
+});
+
+
+test('denied microphone permission does not request an SOS token or claim the dispatcher slot', async () => {
+  let requested = 0;
+  const { session, sdk, client } = fixture(async () => { requested++; return credentials; });
+  sdk.createMicrophoneAudioTrack = async () => { throw new Error('Microphone permission denied'); };
+  await session.join({ ...call, kind: 'sos', report_id: null });
+  assert.equal(requested, 0);
+  assert.equal(client.joined, null);
+  assert.equal(session.state.phase, 'idle');
+  assert.match(session.state.error, /Microphone/);
+});
+
+
+test('persistent RTC reconnection times out and releases the dispatcher microphone', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const { session, events, track } = fixture();
+  await session.join(call);
+  events['connection-state-change']('RECONNECTING');
+  context.mock.timers.tick(30001);
+  await Promise.resolve();
+  assert.equal(track.closed, true);
+  assert.equal(session.state.phase, 'idle');
+  assert.match(session.state.error, /disconnected/);
+});
+
+test('timed-out joining rejects late microphone results without publishing', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const { session, sdk, track, client } = fixture();
+  const pending = deferred();
+  sdk.createMicrophoneAudioTrack = () => pending.promise;
+  const joining = session.join(call);
+  await new Promise(resolve => setImmediate(resolve));
+  context.mock.timers.tick(30001);
+  pending.resolve(track);
+  await joining;
+  assert.equal(track.closed, true);
+  assert.equal(client.published, false);
+  assert.equal(session.state.phase, 'idle');
+  assert.match(session.state.error, /timed out/);
+});
+
+
+test('available dispatchers are alerted only for live SOS calls routed to them', () => {
+  const incoming = { ...call, kind: 'sos', queue_state: 'ringing', offered_dispatcher_key: 'dispatcher-2' };
+  const other = { ...incoming, id: 'other', offered_dispatcher_key: 'dispatcher-3' };
+  const waiting = { ...incoming, id: 'waiting', queue_state: 'waiting', offered_dispatcher_key: null };
+  const answered = { ...incoming, id: 'answered', accepted_at: '2026-11-11T01:00:00Z' };
+  const ended = { ...incoming, id: 'ended', status: 'ended' };
+  const expired = { ...incoming, id: 'expired', joinable: false };
+  assert.deepEqual(incomingSosCalls([incoming, other, waiting, answered, ended, expired, call], 'dispatcher-2', true), [incoming]);
+  assert.deepEqual(incomingSosCalls([incoming], 'dispatcher-2', false), []);
+});
+
+test('incoming alert preserves emergency priority order for multiple offers', () => {
+  const critical = { ...call, id: 'critical', kind: 'sos', queue_state: 'ringing', priority: 0 };
+  const high = { ...critical, id: 'high', priority: 1 };
+  assert.deepEqual(incomingSosCalls([critical, high], 'dispatcher-2', true).map(call => call.id), ['critical', 'high']);
 });

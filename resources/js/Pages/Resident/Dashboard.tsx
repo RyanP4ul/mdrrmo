@@ -1,34 +1,63 @@
 import { Head, Link } from '@inertiajs/react';
 import { route } from 'ziggy-js';
-import { AlertCircle, Bell, CalendarDays, Megaphone, Siren } from 'lucide-react';
+import { AlertCircle, ArrowRight, Bell, CalendarDays, Siren } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDateTime } from '@/lib/utils';
-import type { EmergencyReport, AnnouncementTeaser } from '@/types/website';
+import type { EmergencyReport } from '@/types/website';
 
-export default function Dashboard({ active, announcements, unread, approved }: { active: EmergencyReport[]; announcements: AnnouncementTeaser[]; unread: number; approved: boolean }) {
+export default function Dashboard({ active, unread, approved }: { active: EmergencyReport[]; unread: number; approved: boolean }) {
   return (
     <AppLayout>
       <Head title="Home" />
-      {!approved && <div role="status" className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" />Your registration is being reviewed. You can browse announcements, but reporting and booking unlock once you’re approved.</div>}
-      <Card className="overflow-hidden border-0 bg-gradient-to-br from-red-600 to-red-700 text-white"><CardContent className="flex flex-wrap items-center justify-between gap-4 p-6">
-        <div><h1 className="text-2xl font-semibold">Need help right now?</h1><p className="mt-1 text-sm text-red-100">Send your location to the MDRRMO dispatch center in seconds.</p></div>
-        <Button asChild size="lg" variant="secondary" className="gap-2"><Link href={route('resident.report')}><Siren className="size-5" />Report an emergency</Link></Button></CardContent></Card>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="md:col-span-2"><CardHeader className="pb-2"><CardTitle className="text-base">Active reports</CardTitle></CardHeader><CardContent className="space-y-2">
-          {active.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">No active reports. Stay safe!</p>}
-          {active.map((r) => <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm"><div><p className="font-medium">{r.incident_type.name} · <span className="font-mono text-xs text-muted-foreground">{r.reference}</span></p><p className="text-xs text-muted-foreground">{r.location} · {formatDateTime(r.reported_at)}{r.team && ` · ${r.team.team_name} en route`}</p></div><StatusBadge value={r.status} /></div>)}</CardContent></Card>
-        <div className="space-y-4">
-          <Card><CardContent className="grid gap-2 p-4">
-            <Button asChild variant="outline" className="justify-start gap-2"><Link href={route('resident.schedule')}><CalendarDays className="size-4" />Book a service</Link></Button>
-            <Button asChild variant="outline" className="justify-start gap-2"><Link href={route('resident.notifications')}><Bell className="size-4" />Notifications{unread > 0 && <span className="ml-auto rounded-full bg-primary px-2 text-xs text-primary-foreground">{unread}</span>}</Link></Button></CardContent></Card>
+      {!approved && (
+        <div role="status" className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning-soft p-3.5 text-sm text-warning">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <p>Your registration is being reviewed. Reporting and service booking unlock once you&apos;re approved.</p>
         </div>
+      )}
+
+      <section aria-labelledby="sos-heading" className="flex flex-wrap items-center justify-between gap-4 rounded-lg bg-destructive p-5 text-destructive-foreground">
+        <div>
+          <h1 id="sos-heading" className="text-lg font-semibold">Need help right now?</h1>
+          <p className="mt-0.5 text-sm opacity-90">Send your location to the MDRRMO dispatch center.</p>
+        </div>
+        <Button asChild size="lg" variant="secondary" className="w-full bg-white text-neutral-900 hover:bg-white/90 sm:w-auto">
+          <Link href={route('resident.report')}><Siren aria-hidden="true" />Report an emergency</Link>
+        </Button>
+      </section>
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_16rem]">
+        <section aria-labelledby="active-heading">
+          <h2 id="active-heading" className="mb-2 text-sm font-semibold">Active reports</h2>
+          {active.length === 0 ? (
+            <p className="rounded-lg border bg-card px-4 py-8 text-center text-sm text-muted-foreground">No active reports.</p>
+          ) : (
+            <ul className="divide-y rounded-lg border bg-card">
+              {active.map((r) => (
+                <li key={r.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5 p-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{r.incident_type.name} <span className="ml-1 font-mono text-xs font-normal text-muted-foreground">{r.reference}</span></p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{r.location} · {formatDateTime(r.reported_at)}</p>
+                    {r.team && <p className="mt-0.5 text-xs font-medium text-primary">{r.team.team_name} en route</p>}
+                  </div>
+                  <StatusBadge value={r.status} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section aria-labelledby="more-heading">
+          <h2 id="more-heading" className="mb-2 text-sm font-semibold">Services</h2>
+          <ul className="divide-y rounded-lg border bg-card">
+            <li><Link href={route('resident.schedule')} className="flex min-h-12 items-center gap-3 px-4 text-sm hover:bg-muted/50"><CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />Book a service<ArrowRight className="ml-auto size-4 text-muted-foreground" aria-hidden="true" /></Link></li>
+            <li><Link href={route('resident.notifications')} className="flex min-h-12 items-center gap-3 px-4 text-sm hover:bg-muted/50"><Bell className="size-4 text-muted-foreground" aria-hidden="true" />Notifications
+              {unread > 0 ? <span className="ml-auto rounded-sm bg-primary px-1.5 text-xs font-medium text-primary-foreground tabular-nums" aria-label={`${unread} unread`}>{unread}</span> : <ArrowRight className="ml-auto size-4 text-muted-foreground" aria-hidden="true" />}</Link></li>
+          </ul>
+        </section>
       </div>
-      <Card><CardHeader className="flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="flex items-center gap-2 text-base"><Megaphone className="size-4" />Latest announcements</CardTitle><Button asChild variant="link" size="sm"><Link href={route('resident.announcements')}>View all</Link></Button></CardHeader>
-        <CardContent className="space-y-3">{announcements.map((a) => <div key={a.id}><p className="text-sm font-medium">{a.title} <span className="ml-1 text-xs font-normal text-muted-foreground">{a.category}</span></p><p className="line-clamp-2 text-sm text-muted-foreground">{a.description}</p></div>)}</CardContent></Card>
     </AppLayout>
   );
 }

@@ -135,6 +135,125 @@ class MobileRecordsTest extends TestCase
         $this->patchJson('/api/driver-responder/notifications/'.$data['id'].'/read')->assertNotFound();
     }
 
+    public function test_assigned_schedule_notifications_open_details_only_for_the_notified_responder(): void
+    {
+        $driver = DriverResponderUser::factory()->create();
+        $resident = ResidentUser::factory()->accepted()->create(['contact_number' => '09171234567']);
+        $team = ResponseTeam::create(['team_name' => 'Team Alpha', 'status' => 'active']);
+        TeamMember::create([
+            'response_team_id' => $team->getKey(),
+            'user_id' => $driver->getKey(),
+            'name' => $driver->full_name,
+            'role' => 'Driver/Responder',
+            'status' => 'active',
+        ]);
+        $schedule = ServiceSchedule::create([
+            'resident_id' => $resident->getKey(),
+            'response_team_id' => $team->getKey(),
+            'service_type' => 'Ambulance Standby',
+            'preferred_date' => '2030-01-02',
+            'preferred_time' => '09:30',
+            'address' => 'Barangay hall',
+            'notes' => 'Meet at the main entrance.',
+            'status' => 'confirmed',
+        ]);
+        DriverNotification::scheduleReceipt($driver->getKey(), $schedule, $team->team_name);
+        Sanctum::actingAs($driver, ['*']);
+
+        $notification = $this->getJson('/api/driver-responder/notifications')
+            ->assertOk()
+            ->assertJsonPath('data.0.report_id', null)
+            ->assertJsonPath('data.0.schedule_id', $schedule->getKey())
+            ->json('data.0');
+        $this->getJson('/api/driver-responder/schedules')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $schedule->getKey())
+            ->assertJsonPath('data.0.service_type', 'Ambulance Standby')
+            ->assertJsonPath('data.0.team_name', 'Team Alpha')
+            ->assertJsonPath('data.0.resident', $resident->full_name);
+        $this->getJson('/api/driver-responder/schedules/'.$notification['schedule_id'])
+            ->assertOk()
+            ->assertJsonPath('service_type', 'Ambulance Standby')
+            ->assertJsonPath('status', 'confirmed')
+            ->assertJsonPath('address', 'Barangay hall')
+            ->assertJsonPath('preferred_date', '2030-01-02')
+            ->assertJsonPath('preferred_time', '09:30')
+            ->assertJsonPath('team_name', 'Team Alpha')
+            ->assertJsonPath('resident', $resident->full_name)
+            ->assertJsonPath('contact', '09171234567')
+            ->assertJsonPath('notes', 'Meet at the main entrance.');
+        $this->patchJson('/api/driver-responder/notifications/'.$notification['id'].'/read')->assertOk();
+
+        Sanctum::actingAs(DriverResponderUser::factory()->create(), ['*']);
+        $this->getJson('/api/driver-responder/schedules')->assertOk()->assertJsonCount(0, 'data');
+        $this->getJson('/api/driver-responder/schedules/'.$schedule->getKey())->assertNotFound();
+    }
+
+    public function test_driver_can_complete_only_an_assigned_confirmed_service_and_resident_is_notified_once(): void
+    {
+        $driver = DriverResponderUser::factory()->create();
+        $otherDriver = DriverResponderUser::factory()->create();
+        $resident = ResidentUser::factory()->accepted()->create();
+        $team = ResponseTeam::create(['team_name' => 'Team Alpha', 'status' => 'active']);
+        $today = now(config('mobile.timezone'))->toDateString();
+        $schedule = ServiceSchedule::create([
+            'resident_id' => $resident->getKey(),
+            'response_team_id' => $team->getKey(),
+            'service_type' => 'Ambulance Standby',
+            'preferred_date' => $today,
+            'preferred_time' => '09:30',
+            'address' => 'Barangay hall',
+            'status' => 'confirmed',
+        ]);
+        $pending = ServiceSchedule::create([
+            'resident_id' => $resident->getKey(),
+            'response_team_id' => $team->getKey(),
+            'service_type' => 'Medical Mission',
+            'preferred_date' => $today,
+            'preferred_time' => '10:30',
+            'address' => 'Town plaza',
+            'status' => 'pending',
+        ]);
+        $future = ServiceSchedule::create([
+            'resident_id' => $resident->getKey(),
+            'response_team_id' => $team->getKey(),
+            'service_type' => 'Ambulance Standby',
+            'preferred_date' => now(config('mobile.timezone'))->addDay()->toDateString(),
+            'preferred_time' => '09:30',
+            'address' => 'Barangay hall',
+            'status' => 'confirmed',
+        ]);
+        DriverNotification::scheduleReceipt($driver->getKey(), $schedule, $team->team_name);
+        DriverNotification::scheduleReceipt($driver->getKey(), $pending, $team->team_name);
+        DriverNotification::scheduleReceipt($driver->getKey(), $future, $team->team_name);
+        Sanctum::actingAs($driver, ['*']);
+
+        $this->getJson('/api/driver-responder/schedules?today=1')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $schedule->getKey());
+        $this->patchJson('/api/driver-responder/schedules/'.$schedule->getKey().'/complete')
+            ->assertOk()
+            ->assertJsonPath('status', 'completed');
+        $this->patchJson('/api/driver-responder/schedules/'.$schedule->getKey().'/complete')
+            ->assertOk()
+            ->assertJsonPath('status', 'completed');
+        $this->assertDatabaseHas('service_schedules', ['id' => $schedule->getKey(), 'status' => 'completed']);
+        $this->assertDatabaseCount('resident_notifications', 1);
+        $this->assertDatabaseHas('resident_notifications', [
+            'user_id' => $resident->getKey(),
+            'type' => 'general',
+            'title' => 'Schedule completed',
+            'related_id' => $schedule->getKey(),
+        ]);
+        $this->patchJson('/api/driver-responder/schedules/'.$pending->getKey().'/complete')->assertUnprocessable();
+
+        Sanctum::actingAs($otherDriver, ['*']);
+        $this->patchJson('/api/driver-responder/schedules/'.$schedule->getKey().'/complete')->assertNotFound();
+        $this->getJson('/api/driver-responder/schedules?today=1')->assertOk()->assertJsonCount(0, 'data');
+    }
+
     public function test_multiple_assignments_and_observed_presence_are_returned_without_inventing_online_members(): void
     {
         $driver = DriverResponderUser::factory()->create(['contact_number' => '09171234567']);
@@ -160,16 +279,73 @@ class MobileRecordsTest extends TestCase
         $report = $this->report($resident, ['assigned_driver_id' => $driver->id, 'status' => 'dispatched']);
         $url = '/api/driver-responder/reports/'.$report->id.'/patient';
         Sanctum::actingAs($driver, ['*']);
-        $this->getJson($url)->assertOk()->assertJsonPath('form', null);
+        $this->getJson($url)->assertOk()->assertJsonPath('form', null)->assertJsonPath('defaults.driverName', $driver->full_name);
         $this->putJson($url, [])->assertUnprocessable()->assertJsonValidationErrors('emergency_section.sex');
         $this->putJson($url, $this->patientData())->assertOk()->assertJsonPath('form.emergency_section.patientName', 'Patient');
         $this->putJson($url, $this->patientData())->assertStatus(409);
+        $currentRev = $this->getJson($url)->assertOk()->json('revision');
+        $this->putJson($url, [
+            'revision' => $currentRev,
+            'driver_section' => [
+                'tripDate' => '2026-11-10',
+                'driverName' => $driver->full_name,
+                'governmentCardPlateNo' => 'RESCUE-01',
+                'authorizedPassenger' => 'Patient, Responder Two',
+                'placeVisitedInspected' => 'Town hall',
+                'purpose' => 'Emergency Response - Medical',
+                'balanceInTank' => 25,
+                'issuedByOffice' => 10,
+                'purchasedDuringTrip' => 5,
+                'totalAvailableFuel' => 40,
+                'fuelUsedDuringTrip' => 12.5,
+                'remainingFuel' => 27.5,
+                'gearOilUsed' => 0.5,
+            ],
+        ])->assertOk()
+            ->assertJsonPath('form.driver_section.authorizedPassenger', 'Patient, Responder Two')
+            ->assertJsonPath('form.driver_section.totalAvailableFuel', 40)
+            ->assertJsonPath('form.driver_section.remainingFuel', 27.5)
+            ->assertJsonPath('form.emergency_section.patientName', 'Patient');
         $this->assertDatabaseCount('report_forms', 1);
         Sanctum::actingAs($resident, ['*']);
         $this->getJson('/api/resident/reports/'.$report->id)->assertOk()->assertJsonMissingPath('form')->assertJsonPath('can_care', false);
         Sanctum::actingAs(DriverResponderUser::factory()->create(), ['*']);
         $this->getJson($url)->assertNotFound();
         $this->putJson($url, $this->patientData())->assertForbidden();
+    }
+
+    public function test_driver_form_allows_driver_only_submission_with_long_authorized_passenger(): void
+    {
+        $resident = ResidentUser::factory()->accepted()->create();
+        $driver = DriverResponderUser::factory()->create();
+        $report = $this->report($resident, ['assigned_driver_id' => $driver->id, 'status' => 'dispatched']);
+        $url = '/api/driver-responder/reports/'.$report->id.'/patient';
+        $longPassengers = str_repeat('Juan Dela Cruz, ', 12); // 192 chars (>120, <=255)
+
+        Sanctum::actingAs($driver, ['*']);
+        $this->putJson($url, [
+            'revision' => 'new',
+            'driver_section' => [
+                'tripDate' => '2026-11-12',
+                'driverName' => $driver->full_name,
+                'governmentCardPlateNo' => 'AMB-10',
+                'authorizedPassenger' => $longPassengers,
+                'passengerName' => $longPassengers,
+                'placeVisitedInspected' => 'District Hospital',
+                'purpose' => 'Emergency Response - Medical',
+                'balanceInTank' => 20,
+                'issuedByOffice' => 15,
+                'purchasedDuringTrip' => 5,
+                'totalAvailableFuel' => 40,
+                'fuelUsedDuringTrip' => 10,
+                'remainingFuel' => 30,
+                'gearOilUsed' => 0,
+            ],
+        ])->assertOk()
+            ->assertJsonPath('form.driver_section.authorizedPassenger', trim($longPassengers))
+            ->assertJsonPath('form.driver_section.passengerName', trim($longPassengers))
+            ->assertJsonPath('form.driver_section.totalAvailableFuel', 40)
+            ->assertJsonPath('form.driver_section.remainingFuel', 30);
     }
 
     public function test_trip_records_actual_times_and_reported_distance_and_denies_invalid_order_or_other_drivers(): void
@@ -189,17 +365,48 @@ class MobileRecordsTest extends TestCase
 
     public function test_assignment_progress_records_server_events_without_fabricating_patient_pickup(): void
     {
+        config(['queue.default' => 'database']);
         $driver = DriverResponderUser::factory()->create();
         $vehicle = $this->vehicle($driver);
         $report = $this->report($driver, ['assigned_driver_id' => $driver->id, 'response_team_id' => $vehicle->response_team_id, 'status' => 'dispatched']);
+        DB::table('driver_locations')->insert([
+            'driver_id' => $driver->id, 'session_id' => (string) Str::uuid(),
+            'lat' => 14.8, 'lng' => 120.9, 'accuracy' => 10,
+            'observed_at' => now(), 'expires_at' => now()->addMinutes(5),
+        ]);
         Sanctum::actingAs($driver, ['*']);
-        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['vehicle_status' => 'en-route'])->assertOk();
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['response_status' => 'en-route'])
+            ->assertOk()->assertJsonPath('assignment.response_status', 'en-route');
+        $this->getJson('/api/driver-responder/bootstrap')->assertOk()
+            ->assertJsonPath('assignments.0.response_status', 'en-route');
         $this->assertDatabaseHas('dispatch_trips', ['emergency_report_id' => $report->id, 'vehicle_number' => null, 'driver_name' => $driver->full_name, 'picked_up_at' => null]);
         $this->assertNotNull(DB::table('dispatch_trips')->value('started_at'));
-        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['vehicle_status' => 'on-scene'])->assertOk();
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['response_status' => 'on-scene'])
+            ->assertOk()->assertJsonPath('assignment.response_status', 'on-scene');
+        $this->getJson('/api/driver-responder/bootstrap')->assertOk()
+            ->assertJsonPath('assignments.0.response_status', 'on-scene');
         $this->assertNotNull(DB::table('dispatch_trips')->value('on_scene_at'));
-        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['vehicle_status' => 'available'])->assertOk();
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['response_status' => 'available'])
+            ->assertOk()->assertJsonPath('assignment', null);
+        $this->getJson('/api/driver-responder/bootstrap')->assertOk()->assertJsonCount(0, 'assignments');
         $this->getJson('/api/driver-responder/reports/'.$report->id)->assertOk()->assertJsonPath('vehicle', null)->assertJsonPath('trip.arrived_at', null);
+        $this->assertDatabaseCount('jobs', 3);
+    }
+
+    public function test_assignment_progress_uses_legacy_assigned_vehicle_when_trip_events_are_missing(): void
+    {
+        $driver = DriverResponderUser::factory()->create();
+        $vehicle = $this->vehicle($driver);
+        $report = $this->report($driver, ['assigned_driver_id' => $driver->id, 'response_team_id' => $vehicle->response_team_id, 'status' => 'dispatched']);
+        $vehicle->update(['assigned_report_id' => $report->id, 'status' => 'en-route']);
+        Sanctum::actingAs($driver, ['*']);
+
+        $this->getJson('/api/driver-responder/bootstrap')->assertOk()
+            ->assertJsonPath('assignments.0.response_status', 'en-route');
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['response_status' => 'on-scene'])
+            ->assertOk()->assertJsonPath('assignment.response_status', 'on-scene');
+        $this->getJson('/api/driver-responder/bootstrap')->assertOk()
+            ->assertJsonPath('assignments.0.response_status', 'on-scene');
     }
 
     public function test_expired_password_code_cannot_change_password_or_revoke_sessions(): void

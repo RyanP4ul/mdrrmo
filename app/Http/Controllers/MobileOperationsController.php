@@ -5,13 +5,13 @@ namespace App\Http\Controllers;
 use App\Models\AuditLog;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
-use App\Models\ResidentNotification;
 use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
 use App\Models\ServiceSchedule;
 use App\Services\AutomaticDispatch;
 use App\Services\DispatchService;
 use App\Services\EmergencyReportWorkflow;
+use App\Services\ServiceScheduleWorkflow;
 use App\Support\Audit;
 use App\Support\MobilePage;
 use Illuminate\Http\JsonResponse;
@@ -77,28 +77,20 @@ class MobileOperationsController extends Controller
 
     public function schedules(Request $request): JsonResponse
     {
-        $filters = $request->validate(['status' => ['nullable', 'in:pending,acknowledged,confirmed,declined,completed,cancelled']]);
+        $filters = $request->validate(['status' => ['nullable', 'in:pending,acknowledged,confirmed,declined,completed,cancelled,en-route,on-scene']]);
 
-        return response()->json(MobilePage::make(ServiceSchedule::with('resident:id,first_name,last_name,contact_number')->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status)), request: $request));
+        return response()->json(MobilePage::make(ServiceSchedule::with('resident:id,first_name,last_name,contact_number')->withCount('responders')->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status)), request: $request));
     }
 
-    public function reviewSchedule(Request $request, ServiceSchedule $schedule): JsonResponse
+    public function reviewSchedule(Request $request, ServiceSchedule $schedule, ServiceScheduleWorkflow $workflow): JsonResponse
     {
-        $data = $request->validate(['decision' => ['required', 'in:confirmed,declined,completed'], 'reason' => ['required_if:decision,declined', 'nullable', 'string', 'max:500']]);
+        $data = $request->validate([
+            'decision' => ['required', 'in:acknowledged,confirmed,declined,completed'],
+            'team_id' => ['required_if:decision,confirmed', 'nullable', 'integer', 'exists:response_teams,id'],
+            'reason' => ['required_if:decision,declined', 'nullable', 'string', 'max:500'],
+        ]);
 
-        return DB::transaction(function () use ($request, $schedule, $data): JsonResponse {
-            $record = ServiceSchedule::whereKey($schedule->id)->lockForUpdate()->firstOrFail();
-            if ($record->status === $data['decision']) {
-                return response()->json($record);
-            }
-            abort_unless(($data['decision'] === 'completed' && $record->status === 'confirmed') || (in_array($record->status, ['pending', 'acknowledged'], true) && in_array($data['decision'], ['confirmed', 'declined'], true)), 422, 'This schedule cannot move to that status.');
-            $record->update(['status' => $data['decision'], 'decline_reason' => $data['decision'] === 'declined' ? $data['reason'] : null, 'acknowledged_by' => $request->user()->id, 'acknowledged_by_type' => $request->user()->getMorphClass(), 'acknowledged_at' => now()]);
-            ResidentNotification::create(['user_id' => $record->resident_id, 'type' => $data['decision'] === 'confirmed' ? 'schedule_confirmed' : ($data['decision'] === 'declined' ? 'schedule_cancelled' : 'general'),
-                'title' => 'Schedule '.$data['decision'], 'message' => 'Your '.$record->service_type.' request is '.$data['decision'].'. '.($data['reason'] ?? ''), 'related_type' => ServiceSchedule::class, 'related_id' => $record->id]);
-            Audit::record('UPDATE_SCHEDULE', 'Schedule '.$record->id.' '.$data['decision']);
-
-            return response()->json($record);
-        });
+        return response()->json($workflow->review($schedule, $request->user(), $data['decision'], $data['team_id'] ?? null, $data['reason'] ?? null));
     }
 
     public function automatic(Request $request): JsonResponse

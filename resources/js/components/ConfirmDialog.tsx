@@ -2,7 +2,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
 
+/** Destructive confirmation: states the consequence, names the action on the button, cancel is the safe default. */
 export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel = 'Delete', onConfirm }: {
   open: boolean; onOpenChange: (o: boolean) => void; title: string; description: string;
   confirmLabel?: string; onConfirm: () => void;
@@ -16,7 +18,7 @@ export function ConfirmDialog({ open, onOpenChange, title, description, confirmL
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+          <AlertDialogAction onClick={onConfirm} className={buttonVariants({ variant: 'destructive' })}>
             {confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>

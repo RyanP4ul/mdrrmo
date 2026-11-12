@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Events\VehicleLocationUpdated;
 use App\Models\AdminUser;
 use App\Models\DispatcherUser;
+use App\Models\DriverNotification;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
@@ -16,6 +17,7 @@ use App\Models\TeamMember;
 use App\Models\Vehicle;
 use App\Services\AutomaticDispatch;
 use App\Services\EmergencyReportWorkflow;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -90,23 +92,7 @@ class MobileOptionalFeaturesTest extends TestCase
         Sanctum::actingAs($staff, ['*']);
         $this->getJson('/api/operations/accounts?role=resident')->assertForbidden();
         $this->putJson('/api/operations/automatic-dispatch', ['enabled' => true, 'current_password' => 'password'])->assertForbidden();
-        $this->postJson('/api/operations/announcements', [])->assertForbidden();
-    }
-
-    public function test_announcements_created_by_admin_are_visible_on_mobile_and_can_be_edited_and_removed(): void
-    {
-        Sanctum::actingAs(AdminUser::factory()->create(), ['*']);
-        $body = ['title' => 'Flood warning', 'description' => 'Move to the evacuation center.', 'category' => 'Weather Advisory'];
-        $id = $this->postJson('/api/operations/announcements', $body)->assertCreated()->json('id');
-        $this->assertDatabaseHas('announcements', ['id' => $id, 'title' => 'Flood warning']);
-        $this->putJson('/api/operations/announcements/'.$id, ['title' => 'Updated flood warning'] + $body)->assertOk();
-        Sanctum::actingAs(ResidentUser::factory()->accepted()->create(), ['*']);
-        $this->getJson('/api/mobile/announcements?search=updated&category=Weather%20Advisory')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.title', 'Updated flood warning');
-        $this->getJson('/api/mobile/announcements/'.$id)->assertOk();
-        $this->getJson('/api/mobile/announcements?category=not-a-category')->assertUnprocessable();
-        Sanctum::actingAs(AdminUser::factory()->create(), ['*']);
-        $this->deleteJson('/api/operations/announcements/'.$id)->assertOk();
-        $this->assertDatabaseMissing('announcements', ['id' => $id]);
+        $this->postJson('/api/operations/incident-types', [])->assertForbidden();
     }
 
     public function test_search_and_local_date_filters_reach_older_owned_reports_without_exposing_others(): void
@@ -186,17 +172,39 @@ class MobileOptionalFeaturesTest extends TestCase
 
     public function test_staff_schedule_review_is_transactional_and_terminal_states_cannot_be_reopened(): void
     {
+        $this->travelTo(Carbon::parse('2030-01-02 08:00', 'Asia/Manila'));
+        [, $team] = $this->fleet();
         $resident = ResidentUser::factory()->accepted()->create();
-        $schedule = ServiceSchedule::create(['resident_id' => $resident->id, 'service_type' => 'Medical Mission', 'preferred_date' => now()->addDay()->toDateString(), 'preferred_time' => '10:00', 'address' => 'Hall', 'status' => 'pending']);
+        $schedule = ServiceSchedule::create(['resident_id' => $resident->id, 'service_type' => 'Medical Mission', 'preferred_date' => now(config('mobile.timezone'))->toDateString(), 'preferred_time' => '10:00', 'address' => 'Hall', 'status' => 'pending']);
         Sanctum::actingAs(DispatcherUser::factory()->create(), ['*']);
         $url = '/api/operations/schedules/'.$schedule->id;
         $this->patchJson($url, ['decision' => 'declined'])->assertUnprocessable()->assertJsonValidationErrors('reason');
-        $this->patchJson($url, ['decision' => 'confirmed'])->assertOk()->assertJsonPath('status', 'confirmed');
-        $this->patchJson($url, ['decision' => 'confirmed'])->assertOk();
+        $this->patchJson($url, ['decision' => 'confirmed', 'team_id' => $team->id])->assertOk()->assertJsonPath('status', 'confirmed');
+        $this->patchJson($url, ['decision' => 'confirmed', 'team_id' => $team->id])->assertOk();
         $this->assertDatabaseCount('resident_notifications', 1);
         $this->patchJson($url, ['decision' => 'completed'])->assertOk();
-        $this->patchJson($url, ['decision' => 'confirmed'])->assertUnprocessable();
+        $this->patchJson($url, ['decision' => 'confirmed', 'team_id' => $team->id])->assertUnprocessable();
         $this->assertDatabaseHas('service_schedules', ['id' => $schedule->id, 'status' => 'completed']);
+    }
+
+    public function test_automatic_dispatch_waits_while_the_team_is_handling_a_scheduled_service(): void
+    {
+        [$driver, $team] = $this->fleet();
+        $resident = ResidentUser::factory()->accepted()->create();
+        $schedule = $resident->schedules()->create([
+            'service_type' => 'Medical Mission', 'preferred_date' => now(config('mobile.timezone'))->toDateString(), 'preferred_time' => '10:00',
+            'address' => 'Town hall', 'status' => 'en-route', 'response_team_id' => $team->id,
+        ]);
+        DriverNotification::scheduleReceipt($driver->id, $schedule, $team->team_name);
+        $report = $this->report($resident);
+        DB::table('automatic_dispatch_settings')->update(['enabled' => true]);
+
+        $this->assertSame(0, app(AutomaticDispatch::class)->drain());
+        $this->assertDatabaseHas('emergency_reports', ['id' => $report->id, 'status' => 'pending']);
+        $this->assertDatabaseHas('automatic_dispatch_attempts', ['emergency_report_id' => $report->id, 'state' => 'waiting']);
+        $schedule->update(['status' => 'completed']);
+        $this->assertSame(1, app(AutomaticDispatch::class)->drain());
+        $this->assertDatabaseHas('emergency_reports', ['id' => $report->id, 'status' => 'dispatched', 'assigned_driver_id' => $driver->id]);
     }
 
     public function test_admin_accounts_and_resident_review_use_role_tables_and_keep_self_active(): void

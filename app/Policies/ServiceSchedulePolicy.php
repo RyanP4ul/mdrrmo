@@ -11,6 +11,6 @@ class ServiceSchedulePolicy
     {
         return $user->hasRole('resident')
             && $schedule->resident_id === $user->getKey()
-            && in_array($schedule->status, ['pending', 'confirmed'], true);
+            && in_array($schedule->status, ['pending', 'acknowledged', 'confirmed'], true);
     }
 }

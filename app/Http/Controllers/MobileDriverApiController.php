@@ -8,10 +8,14 @@ use App\Models\DriverNotification;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
+use App\Models\MaintenanceReport;
 use App\Models\ResponseTeam;
 use App\Models\Vehicle;
+use App\Services\DispatchService;
 use App\Services\DriverResponseProgress;
 use App\Services\EmergencyReportWorkflow;
+use App\Services\TeamRoles;
+use App\Services\VehicleMaintenanceService;
 use App\Support\MobilePage;
 use App\Support\MobileValidation;
 use Carbon\Carbon;
@@ -21,6 +25,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class MobileDriverApiController extends Controller
@@ -32,6 +37,9 @@ class MobileDriverApiController extends Controller
 
         $assignments = $this->activeReports($driver)->get();
         $assignment = $assignments->first();
+        $teamRoles = app(TeamRoles::class)->memberships($driver);
+        $vehicles = collect($teamRoles)->flatMap(fn (array $role) => $role['vehicles'] ?? [])->unique('id')->values()->all();
+        $activeVehicle = collect($teamRoles)->pluck('active_vehicle')->filter()->first();
 
         return response()->json([
             'unread_count' => DriverNotification::where('driver_id', $driver->id)->whereNull('read_at')->count(),
@@ -39,15 +47,20 @@ class MobileDriverApiController extends Controller
             'profile' => [
                 'name' => $driver->full_name,
                 'contact' => $driver->contact_number ?? '',
-                'vehicle_status' => 'available',
+                'vehicle_status' => $activeVehicle['vehicle_status'] ?? 'available',
+                'vehicle_id' => $activeVehicle['id'] ?? null,
             ],
             'teams' => $this->teamMembers($driver),
+            'team_roles' => $teamRoles,
+            'vehicles' => $vehicles,
+            'can_dispatch' => $assignments->isNotEmpty() || collect($teamRoles)->contains('role', 'Driver'),
             'assignment' => $assignment
                 ? $this->reportData($assignment)
                 : null,
             'incident_types' => IncidentType::query()
                 ->orderBy('name')
                 ->get(['id', 'name', 'priority', 'color']),
+            'maintenance_issue_types' => MaintenanceReport::ISSUE_TYPES,
         ]);
     }
 
@@ -62,6 +75,83 @@ class MobileDriverApiController extends Controller
                 ->with(['incidentType:id,name,color', 'team.vehicles', 'driver:id,first_name,last_name'])
                 ->get()
                 ->map(fn (EmergencyReport $report): array => $this->reportData($report, $vehicle)),
+        ]);
+    }
+
+    public function changeTeamRole(Request $request, ResponseTeam $team, TeamRoles $roles): JsonResponse
+    {
+        $data = $request->validate(['role' => ['required', 'in:Driver,Responder']]);
+        $roles->changeOwnRole($team, $request->user(), $data['role']);
+
+        return response()->json([
+            'team_roles' => $roles->memberships($request->user()),
+            'teams' => $this->teamMembers($request->user()),
+        ]);
+    }
+
+    public function switchTeamVehicle(Request $request, ResponseTeam $team, TeamRoles $roles): JsonResponse
+    {
+        $data = $request->validate(['vehicle_id' => ['required', 'integer', 'min:1']]);
+        $vehicle = $roles->switchVehicle($team, $request->user(), (int) $data['vehicle_id']);
+        $teamRoles = $roles->memberships($request->user());
+
+        return response()->json([
+            'vehicle' => $vehicle->toTeamPayload($vehicle->id),
+            'team_roles' => $teamRoles,
+            'vehicles' => collect($teamRoles)->flatMap(fn (array $role) => $role['vehicles'] ?? [])->unique('id')->values()->all(),
+        ]);
+    }
+
+    public function maintenanceReports(Request $request, VehicleMaintenanceService $service): JsonResponse
+    {
+        /** @var DriverResponderUser $driver */
+        $driver = $request->user();
+        $teamIds = ResponseTeam::query()
+            ->whereHas('members', fn ($q) => $q->where('user_id', $driver->id)->where('status', 'active'))
+            ->pluck('id')
+            ->all();
+
+        $query = MaintenanceReport::query()
+            ->with(['vehicle', 'team', 'reporter', 'reviewer'])
+            ->where(function ($q) use ($driver, $teamIds): void {
+                $q->where('reported_by', $driver->id);
+                if (! empty($teamIds)) {
+                    $q->orWhereIn('response_team_id', $teamIds);
+                }
+            });
+
+        return response()->json(MobilePage::make(
+            $query,
+            fn (MaintenanceReport $report): array => $service->formatReport($report),
+            $request,
+        ));
+    }
+
+    public function storeMaintenanceReport(Request $request, VehicleMaintenanceService $service): JsonResponse
+    {
+        /** @var DriverResponderUser $driver */
+        $driver = $request->user();
+        $data = $request->validate([
+            'vehicle_id' => ['required', 'integer', 'exists:vehicles,id'],
+            'issue_type' => ['required', 'string', Rule::in(MaintenanceReport::ISSUE_TYPES)],
+            'severity' => ['required', 'in:low,medium,high,critical'],
+            'mileage' => ['nullable', 'integer', 'min:0', 'max:2000000'],
+            'description' => ['required', 'string', 'max:2000'],
+            'recommend_out_of_service' => ['nullable', 'boolean'],
+        ]);
+
+        $report = $service->submitReport($driver, $data);
+
+        return response()->json(['report' => $service->formatReport($report)], 201);
+    }
+
+    public function hospitals(Request $request, EmergencyReport $report, DispatchService $dispatch): JsonResponse
+    {
+        abort_unless($report->assigned_driver_id === $request->user()->getKey(), 404);
+
+        return response()->json([
+            'report_id' => $report->getKey(),
+            'data' => $dispatch->recommendHospitals($report),
         ]);
     }
 
@@ -104,7 +194,7 @@ class MobileDriverApiController extends Controller
             abort_unless($selected, 404, 'No vehicle is assigned to your team.');
             $vehicle = Vehicle::query()->whereKey($selected->getKey())->lockForUpdate()->firstOrFail();
             Gate::authorize('update', $vehicle);
-            abort_if($vehicle->assigned_report_id !== null || ! in_array($vehicle->status, ['available', 'offline'], true), 422, 'This vehicle is assigned to an active incident.');
+            abort_if($vehicle->assigned_report_id !== null || ! in_array($vehicle->status, ['available', 'offline'], true), 422, 'This vehicle is assigned to an active incident or under maintenance.');
             $vehicle->update(['status' => $status]);
 
             return $vehicle;
@@ -188,6 +278,9 @@ class MobileDriverApiController extends Controller
     {
         return EmergencyReport::query()
             ->where('assigned_driver_id', $driver->getKey())
+            ->where(fn ($query) => $query->whereDoesntHave('team')->orWhereHas('team', fn ($team) => $team
+                ->where('member_roles_enabled', false)->orWhere(fn ($managed) => $managed->where('status', 'active')
+                ->whereHas('members', fn ($member) => $member->where('user_id', $driver->id)->where('status', 'active')->where('role', 'Driver')))))
             ->whereIn('status', ['dispatched', 'acknowledged'])
             ->with(['incidentType:id,name,color', 'team.vehicles', 'driver:id,first_name,last_name'])
             ->latest('reported_at');
@@ -244,9 +337,29 @@ class MobileDriverApiController extends Controller
      */
     private function reportData(EmergencyReport $report, ?Vehicle $vehicle = null): array
     {
-        $report->loadMissing(['incidentType', 'team.vehicles', 'driver']);
-        $teamVehicle = $report->team?->vehicles->firstWhere('assigned_report_id', $report->getKey());
+        $report->loadMissing(['incidentType', 'team.vehicles', 'team.members.user', 'driver', 'form']);
+        $teamVehicle = $report->team?->vehicles->firstWhere('assigned_report_id', $report->getKey())
+            ?? $report->team?->resolveActiveVehicle();
         $trip = DispatchTrip::where('emergency_report_id', $report->id)->first();
+        // Match DriverResponseProgress for assignments created before trip events.
+        // An active team vehicle may be working on a different report.
+        $responseStatus = $trip?->on_scene_at ? 'on-scene' : ($trip?->started_at ? 'en-route'
+            : (Vehicle::where('assigned_report_id', $report->id)->value('status') ?? 'available'));
+        $patientName = trim((string) (($report->victim_info['name'] ?? null) ?: $report->reporter_name ?: ''));
+        $responders = $report->team?->members
+            ? $report->team->members
+                ->where('status', 'active')
+                ->filter(fn ($m) => ($m->role ?? '') !== 'Driver' && $m->user_id !== $report->assigned_driver_id)
+                ->map(fn ($m) => trim((string) ($m->user?->full_name ?? $m->name)))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all()
+            : [];
+        $authorizedPassenger = trim((string) ($report->form?->driver_section['authorizedPassenger'] ?? $report->form?->driver_section['passengerName'] ?? ''))
+            ?: collect([$patientName, ...$responders])->filter()->unique()->implode(', ');
+        $driverSection = $report->form?->driver_section ?? [];
+        $hasDriverForm = ! empty(array_filter($driverSection, fn ($v) => $v !== null && $v !== ''));
 
         return [
             'id' => $report->getKey(),
@@ -260,10 +373,13 @@ class MobileDriverApiController extends Controller
             'reported_at' => $report->reported_at?->toIso8601String(),
             'resolved_at' => $report->resolved_at?->toIso8601String(),
             'driver' => $report->driver?->full_name,
+            'patient_name' => $patientName,
+            'authorized_passenger' => $authorizedPassenger,
+            'has_driver_form' => $hasDriverForm,
             'trip' => $trip,
-            'response_status' => $trip?->on_scene_at ? 'on-scene' : ($trip?->started_at ? 'en-route' : 'available'),
+            'response_status' => $responseStatus,
             'vehicle_id' => $teamVehicle?->id,
-            'vehicle' => $teamVehicle?->plate_number ?? DispatchTrip::where('emergency_report_id', $report->id)->value('vehicle_number') ?? $vehicle?->plate_number,
+            'vehicle' => $teamVehicle?->plate_number ?? $trip?->vehicle_number ?? $vehicle?->plate_number,
             'vehicle_status' => $teamVehicle?->status ?? $vehicle?->status,
         ];
     }

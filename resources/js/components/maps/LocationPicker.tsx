@@ -15,7 +15,7 @@ export function LocationPicker({ lat, lng, onChange, className = 'h-64' }: Props
       <Map center={center} zoom={15}>
         <MapControls showZoom />
         <MapMarker longitude={center[0]} latitude={center[1]} draggable onDragEnd={(e: { lng: number; lat: number }) => onChange(e.lat, e.lng)}>
-          <MarkerContent><div className="size-5 rounded-full border-2 border-white bg-red-600 shadow-lg ring-4 ring-red-600/25" /></MarkerContent>
+          <MarkerContent><div className="size-5 rounded-full border-2 border-white bg-critical shadow-md ring-4 ring-critical/25" /></MarkerContent>
         </MapMarker>
       </Map>
       <Button type="button" size="sm" variant="secondary" className="absolute left-2 top-2 shadow" onClick={locate}>

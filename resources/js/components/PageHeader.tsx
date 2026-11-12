@@ -1,21 +1,22 @@
 import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-export function PageHeader({ icon: Icon, title, description, actions }: {
-  icon: LucideIcon; title: string; description?: string; actions?: ReactNode;
+/**
+ * Page title row. Title + one line of context on the left, actions on the right.
+ * No icon tile: the sidebar already tells people where they are.
+ * `icon` is still accepted so older call sites compile, but it is intentionally not rendered.
+ */
+export function PageHeader({ title, description, actions, eyebrow }: {
+  title: string; description?: string; actions?: ReactNode; eyebrow?: string; icon?: LucideIcon;
 }) {
   return (
-    <div className="page-heading flex flex-wrap items-center justify-between gap-4">
-      <div className="flex items-center gap-3">
-        <div className="grid size-12 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/15">
-          <Icon className="size-5" />
-        </div>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-          {description && <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{description}</p>}
-        </div>
+    <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+      <div className="min-w-0">
+        {eyebrow && <p className="eyebrow mb-1">{eyebrow}</p>}
+        <h1 className="text-xl font-semibold tracking-tight text-balance">{title}</h1>
+        {description && <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">{description}</p>}
       </div>
-      {actions}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

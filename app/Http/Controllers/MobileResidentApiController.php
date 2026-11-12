@@ -8,12 +8,12 @@ use App\Models\IncidentType;
 use App\Models\ResidentNotification;
 use App\Models\ResidentUser;
 use App\Models\ServiceSchedule;
+use App\Services\ServiceScheduleWorkflow;
 use App\Support\MobilePage;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -102,7 +102,7 @@ class MobileResidentApiController extends Controller
         });
     }
 
-    public function storeSchedule(Request $request): JsonResponse
+    public function storeSchedule(Request $request, ServiceScheduleWorkflow $workflow): JsonResponse
     {
         /** @var ResidentUser $resident */
         $resident = $request->user();
@@ -123,8 +123,8 @@ class MobileResidentApiController extends Controller
         }
         $data['preferred_time'] = $time;
 
-        return DB::transaction(function () use ($resident, $data): JsonResponse {
-            $schedule = $resident->schedules()->create($data + ['status' => 'pending']);
+        return DB::transaction(function () use ($resident, $data, $workflow): JsonResponse {
+            $schedule = $workflow->create($resident, $data);
             $notification = ResidentNotification::query()->create([
                 'user_id' => $resident->getKey(),
                 'type' => 'general',
@@ -141,26 +141,14 @@ class MobileResidentApiController extends Controller
         });
     }
 
-    public function cancelSchedule(Request $request, int $schedule): JsonResponse
+    public function cancelSchedule(Request $request, int $schedule, ServiceScheduleWorkflow $workflow): JsonResponse
     {
-        return DB::transaction(function () use ($request, $schedule): JsonResponse {
-            $record = $request->user()->schedules()->whereKey($schedule)->lockForUpdate()->firstOrFail();
-            if ($record->status === 'cancelled') {
-                return response()->json(['schedule' => $record]);
-            }
-            Gate::authorize('cancel', $record);
-            $record->update(['status' => 'cancelled']);
-            $notification = ResidentNotification::query()->create([
-                'user_id' => $request->user()->getKey(),
-                'type' => 'schedule_cancelled',
-                'title' => 'Schedule cancelled',
-                'message' => "Your {$record->service_type} request has been cancelled.",
-                'related_type' => ServiceSchedule::class,
-                'related_id' => $record->getKey(),
-            ]);
+        $record = $request->user()->schedules()->findOrFail($schedule);
+        $record = $workflow->cancel($record, $request->user());
+        $notification = ResidentNotification::where('user_id', $request->user()->id)->where('related_type', ServiceSchedule::class)
+            ->where('related_id', $record->id)->where('type', 'schedule_cancelled')->latest('id')->first();
 
-            return response()->json(['schedule' => $record, 'notification' => $notification]);
-        });
+        return response()->json(['schedule' => $record, 'notification' => $notification]);
     }
 
     public function markRead(Request $request, int $notification): JsonResponse

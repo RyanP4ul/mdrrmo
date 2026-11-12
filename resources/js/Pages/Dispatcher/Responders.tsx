@@ -33,11 +33,11 @@ export default function Responders({ teams, filters, drivers }: { teams: Paginat
   const [del, setDel] = useState<Team | null>(null);
   const [shiftTeam, setShiftTeam] = useState<Team | null>(null);
 
-  const form = useForm<{ team_name: string; status: string; members: Member[] }>({ team_name: '', status: 'active', members: [{ name: '', role: 'Responder' }] });
+  const form = useForm<{ team_name: string; status: string; members: Member[]; driver_user_id: number | null }>({ team_name: '', status: 'active', members: [{ name: '', role: 'Responder' }], driver_user_id: null });
   const shift = useForm<{ start_time: string; end_time: string; status: string; member_ids: number[] }>({ start_time: '', end_time: '', status: 'off-shift', member_ids: [] });
   const err = form.errors as Record<string, string>;
 
-  const openForm = (t?: Team) => { setEditing(t ?? null); form.clearErrors(); form.setData(t ? { team_name: t.team_name, status: t.status, members: t.members.map((m) => ({ ...m })) } : { team_name: '', status: 'active', members: [{ name: '', role: 'Responder' }] }); setFormOpen(true); };
+  const openForm = (t?: Team) => { setEditing(t ?? null); form.clearErrors(); form.setData(t ? { team_name: t.team_name, status: t.status, members: t.members.map((m) => ({ ...m })), driver_user_id: t.members.find((m) => m.role?.toLowerCase() === 'driver')?.user_id ?? null } : { team_name: '', status: 'active', members: [{ name: '', role: 'Responder' }], driver_user_id: null }); setFormOpen(true); };
   const setMember = (i: number, patch: Partial<Member>) => form.setData('members', form.data.members.map((m, j) => (j === i ? { ...m, ...patch } : m)));
   const save = () => { const o = { preserveScroll: true, onSuccess: () => setFormOpen(false) }; editing ? form.put(route('dispatcher.responders.update', editing.id), o) : form.post(route('dispatcher.responders.store'), o); };
 
@@ -48,18 +48,18 @@ export default function Responders({ teams, filters, drivers }: { teams: Paginat
       <FilterBar search={values.search} onSearch={(v) => set('search', v)} placeholder="Search team name…">
         <FilterSelect label="Status" value={values.status} onChange={(v) => set('status', v === 'all' ? '' : v)} options={STATUSES.map((s) => ({ value: s, label: s.replace('-', ' ') }))} />
       </FilterBar>
-      {teams.data.length === 0 ? <Card><EmptyState icon={Shield} title="No teams found" /></Card> : (
-        <div className="grid gap-4 lg:grid-cols-2">{teams.data.map((t) => (
+      {teams.data.length === 0 ? <div className="rounded-lg border bg-card"><EmptyState icon={Shield} title="No teams found" hint="Create a team to start scheduling shifts." /></div> : (
+        <div className="grid gap-5 lg:grid-cols-2">{teams.data.map((t) => (
           <Card key={t.id}><CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
             <div className="space-y-1"><CardTitle className="text-base">{t.team_name}</CardTitle><StatusBadge value={t.status} /></div>
             <div className="flex"><Button variant="ghost" size="icon" aria-label="Schedule shift" onClick={() => { shift.reset(); setShiftTeam(t); }}><CalendarClock className="size-4" /></Button>
               <Button variant="ghost" size="icon" aria-label={`Edit ${t.team_name}`} onClick={() => openForm(t)}><Pencil className="size-4" /></Button>
               <Button variant="ghost" size="icon" aria-label={`Delete ${t.team_name}`} className="text-destructive" onClick={() => setDel(t)}><Trash2 className="size-4" /></Button></div>
           </CardHeader><CardContent className="space-y-4">
-            <ul className="flex flex-wrap gap-1.5">{t.members.map((m) => <li key={m.id} className="rounded-md bg-muted/60 px-2.5 py-1 text-sm">{m.name}<span className="ml-1.5 text-xs text-muted-foreground">{m.role}</span></li>)}</ul>
-            {t.shifts.length > 0 && <div className="space-y-1.5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent shifts</p>
+            <ul className="flex flex-wrap gap-1.5">{t.members.map((m) => <li key={m.id} className="rounded-sm border bg-muted/50 px-2 py-0.5 text-sm">{m.name}<span className="ml-1.5 text-xs text-muted-foreground">{m.role}</span></li>)}</ul>
+            {t.shifts.length > 0 && <div className="space-y-1.5"><p className="eyebrow">Recent shifts</p>
               {t.shifts.map((s) => (
-                <div key={s.id} className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm"><span className="text-muted-foreground">{formatDateTime(s.start_time)} → {formatDateTime(s.end_time)}</span>
+                <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"><span className="text-muted-foreground">{formatDateTime(s.start_time)} → {formatDateTime(s.end_time)}</span>
                   <Select value={s.status} onValueChange={(v) => router.patch(route('dispatcher.shifts.update', [t.id, s.id]), { status: v }, { preserveScroll: true })}><SelectTrigger className="h-8 w-32" aria-label="Shift status"><SelectValue /></SelectTrigger>
                     <SelectContent>{['on-shift', 'off-shift', 'on-break'].map((x) => <SelectItem key={x} value={x} className="capitalize">{x.replace('-', ' ')}</SelectItem>)}</SelectContent></Select></div>))}</div>}
           </CardContent></Card>))}</div>
@@ -67,8 +67,15 @@ export default function Responders({ teams, filters, drivers }: { teams: Paginat
       <ServerPagination page={teams} noun="team" />
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{editing ? 'Edit team' : 'New team'}</DialogTitle><DialogDescription>Select at least one driver/responder for this team.</DialogDescription></DialogHeader>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg"><DialogHeader><DialogTitle>{editing ? 'Edit team' : 'New team'}</DialogTitle><DialogDescription>Select at least one driver/responder for this team.</DialogDescription></DialogHeader>
           <div className="space-y-3">
+            <div className="space-y-1.5"><Label>Team driver</Label>
+              <Select value={String(form.data.driver_user_id ?? 'none')} onValueChange={(value) => form.setData('driver_user_id', value === 'none' ? null : Number(value))}>
+                <SelectTrigger aria-label="Team driver"><SelectValue placeholder="No driver selected" /></SelectTrigger>
+                <SelectContent><SelectItem value="none">No driver selected</SelectItem>{form.data.members.filter((member) => member.user_id && (member.status ?? 'active') === 'active').map((member) => <SelectItem key={member.user_id} value={String(member.user_id)}>{member.name}</SelectItem>)}</SelectContent>
+              </Select>{err.driver_user_id && <p className="text-xs text-destructive">{err.driver_user_id}</p>}
+              <p className="text-xs text-muted-foreground">Only one member can be Driver. Reassigning the role makes the previous Driver a Responder.</p>
+            </div>
             <div className="space-y-1.5"><Label htmlFor="tn">Team name *</Label><Input id="tn" value={form.data.team_name} onChange={(e) => form.setData('team_name', e.target.value)} />{err.team_name && <p className="text-xs text-destructive">{err.team_name}</p>}</div>
             <div className="space-y-1.5"><Label>Status</Label><Select value={form.data.status} onValueChange={(v) => form.setData('status', v)}><SelectTrigger aria-label="Status"><SelectValue /></SelectTrigger><SelectContent>{STATUSES.map((s) => <SelectItem key={s} value={s} className="capitalize">{s.replace('-', ' ')}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-2"><Label>Members</Label>
@@ -95,7 +102,7 @@ export default function Responders({ teams, filters, drivers }: { teams: Paginat
       </Dialog>
 
       <Dialog open={!!shiftTeam} onOpenChange={(o) => !o && setShiftTeam(null)}>
-        <DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Schedule shift · {shiftTeam?.team_name}</DialogTitle><DialogDescription>Pick the time window and who is on duty.</DialogDescription></DialogHeader>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md"><DialogHeader><DialogTitle>Schedule shift · {shiftTeam?.team_name}</DialogTitle><DialogDescription>Pick the time window and who is on duty.</DialogDescription></DialogHeader>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label htmlFor="st">Start</Label><Input id="st" type="datetime-local" value={shift.data.start_time} onChange={(e) => shift.setData('start_time', e.target.value)} /></div>
               <div className="space-y-1.5"><Label htmlFor="en">End</Label><Input id="en" type="datetime-local" value={shift.data.end_time} onChange={(e) => shift.setData('end_time', e.target.value)} /></div></div>

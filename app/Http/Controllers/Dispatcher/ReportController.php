@@ -30,12 +30,15 @@ class ReportController extends Controller
     public function index(Request $request)
     {
         Gate::authorize('viewAny', EmergencyReport::class);
-        $f = $request->only('search', 'type', 'priority');
+        $f = $request->only('search', 'type', 'priority', 'tab');
 
         return Inertia::render('Dispatcher/Reports/Index', [
             'filters' => $f,
             'types' => IncidentType::orderBy('name')->get(['id', 'name']),
-            'reports' => EmergencyReport::with('incidentType:id,name,color')->whereIn('status', ['resolved', 'invalid'])
+            'reports' => EmergencyReport::with(['incidentType:id,name,color', 'form', 'driver:id,first_name,last_name'])
+                ->when(($f['tab'] ?? '') === 'driver',
+                    fn ($query) => $query->withDriverForm(),
+                    fn ($query) => $query->whereIn('status', ['resolved', 'invalid']))
                 ->filter($f)->latest('reported_at')->paginate(6)->withQueryString(),
         ]);
     }
@@ -43,7 +46,7 @@ class ReportController extends Controller
     public function show(EmergencyReport $report)
     {
         Gate::authorize('view', $report);
-        $report->load(['incidentType', 'team.members', 'driver:id,first_name,last_name']);
+        $report->load(['incidentType', 'team.members', 'driver:id,first_name,last_name', 'form']);
         $team = $report->team ?? $this->dispatcher->autoAssignTeam();
 
         return Inertia::render('Dispatcher/Reports/Show', [

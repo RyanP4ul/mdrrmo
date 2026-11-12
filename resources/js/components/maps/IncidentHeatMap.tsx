@@ -23,7 +23,7 @@ export default function IncidentHeatMap({ points }: { points: Point[] }) {
         })}
       </Map>
       {legend.length > 0 && (
-        <div className="absolute bottom-3 left-3 rounded-lg bg-background/90 p-2.5 text-xs shadow backdrop-blur">
+        <div className="absolute bottom-3 left-3 rounded-md border bg-card p-2.5 text-xs">
           {legend.map(([t, c]) => (
             <div key={t} className="flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ background: c }} />{t}</div>
           ))}

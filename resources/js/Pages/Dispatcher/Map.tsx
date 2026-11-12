@@ -1,17 +1,13 @@
 import { Head, router } from '@inertiajs/react';
 import { useConnectionStatus, useEcho } from '@laravel/echo-react';
-import { Map as MapIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { mergeDriverMove, readDriverMove, type DriverMove } from '@/lib/live-drivers';
 import AppLayout from '@/Layouts/AppLayout';
 import { PageHeader } from '@/components/PageHeader';
-import { StatCard } from '@/components/StatCard';
+import { StatCard, StatGroup } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DriverMap, type MapDriver, type MapReport } from '@/components/maps/DriverMap';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { Ambulance, Navigation, ShieldCheck, WifiOff } from 'lucide-react';
 
 const ago = (iso: string | null) => { if (!iso) return 'no signal'; const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000)); return s < 60 ? `${s}s ago` : `${Math.round(s / 60)}m ago`; };
 
@@ -77,27 +73,33 @@ export default function MapPage({ drivers: snapshot, reports, snapshotAt }: { dr
     <AppLayout>
       <Head title="Live Map" />
       {import.meta.env.VITE_REVERB_APP_KEY && <DispatchMapRealtime onDriver={onDriver} onStatus={setLive} refresh={refresh} />}
-      <PageHeader icon={MapIcon} title="Live response map" description={live ? 'Locations are updating live. Select a responder to see their assignment.' : 'Locations refresh every 15 seconds. Select a responder to see their assignment.'} />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Dispatched / En route" value={count('dispatched') + count('en-route')} icon={Navigation} tone="bg-amber-100 text-amber-600" />
-        <StatCard label="On scene" value={count('on-scene')} icon={Ambulance} tone="bg-red-100 text-red-600" />
-        <StatCard label="Available" value={count('available')} icon={ShieldCheck} tone="bg-emerald-100 text-emerald-600" />
-        <StatCard label="Offline" value={count('offline')} icon={WifiOff} tone="bg-slate-100 text-slate-600" />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-4">
-        <div className="lg:col-span-3"><DriverMap drivers={visibleDrivers} reports={reports} selectedId={sel} onSelect={setSel} /></div>
-        <Card><CardHeader className="pb-2"><CardTitle className="text-base">Drivers / Responders ({drivers.length})</CardTitle></CardHeader>
-          <CardContent className="p-0"><ScrollArea className="h-[500px]"><ul className="space-y-2 p-4 pt-0">
+      <PageHeader title="Live response map"
+        description={live ? 'Locations are updating live. Select a responder to see their assignment.' : 'Locations refresh every 15 seconds. Select a responder to see their assignment.'}
+        actions={<span className={cn('inline-flex h-6 items-center gap-1.5 rounded-sm px-2 text-xs font-medium', live ? 'bg-ok-soft text-ok' : 'bg-muted text-muted-foreground')}><span aria-hidden="true" className="size-1.5 rounded-full bg-current" />{live ? 'Live' : 'Polling every 15s'}</span>} />
+      <StatGroup>
+        <StatCard label="Dispatched / en route" value={count('dispatched') + count('en-route')} status="brand" />
+        <StatCard label="On scene" value={count('on-scene')} status="info" />
+        <StatCard label="Available" value={count('available')} status="ok" />
+        <StatCard label="Offline" value={count('offline')} />
+      </StatGroup>
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <DriverMap drivers={visibleDrivers} reports={reports} selectedId={sel} onSelect={setSel} />
+        <section aria-labelledby="responders-heading" className="overflow-hidden rounded-lg border bg-card">
+          <h2 id="responders-heading" className="border-b px-4 py-3 text-sm font-semibold">Drivers / responders <span className="ml-1 font-normal text-muted-foreground tabular-nums">{drivers.length}</span></h2>
+          <ul className="max-h-[32rem] divide-y overflow-y-auto">
             {visibleDrivers.map((v) => (
-              <li key={v.id}><button type="button" onClick={() => setSel(v.id)} aria-pressed={sel === v.id}
-                className={cn('w-full rounded-lg border p-3 text-left text-sm transition hover:border-primary/50', sel === v.id && 'border-primary bg-primary/5')}>
-                <div className="flex items-center justify-between"><span className="font-medium">{v.name}</span><StatusBadge value={v.status} /></div>
-                <p className="mt-1 text-xs text-muted-foreground">{v.teamName ?? 'Driver / Responder'} · {v.speed} km/h · {ago(v.updatedAt)}</p>
-                {v.report && <p className="mt-1 truncate text-xs">→ {v.report.reference}: {v.report.location}</p>}
-              </button></li>
+              <li key={v.id}>
+                <button type="button" onClick={() => setSel(v.id)} aria-pressed={sel === v.id}
+                  className={cn('block min-h-11 w-full px-4 py-3 text-left text-sm transition-colors hover:bg-muted/50', sel === v.id && 'bg-primary/5')}>
+                  <span className="flex items-center justify-between gap-2"><span className="font-medium">{v.name}</span><StatusBadge value={v.status} /></span>
+                  <span className="mt-1 block text-xs text-muted-foreground tabular-nums">{v.teamName ?? 'Driver / Responder'} · {v.speed} km/h · {ago(v.updatedAt)}</span>
+                  {v.report && <span className="mt-1 block truncate text-xs">→ {v.report.reference}: {v.report.location}</span>}
+                </button>
+              </li>
             ))}
-            {drivers.length === 0 && <li className="text-sm text-muted-foreground">Waiting for driver/responder coordinates. Enable location and open the mobile app.</li>}
-          </ul></ScrollArea></CardContent></Card>
+            {drivers.length === 0 && <li className="px-4 py-8 text-center text-sm text-muted-foreground">Waiting for driver/responder coordinates. Enable location and open the mobile app.</li>}
+          </ul>
+        </section>
       </div>
     </AppLayout>
   );

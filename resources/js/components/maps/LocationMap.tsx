@@ -15,14 +15,14 @@ export function LocationMap({ lat, lng, label, hospitals = [], routeTo, classNam
         {target && <MapRoute coordinates={[[lng, lat], [target.lng, target.lat]]} color="#2563eb" width={4} dashArray={[2, 2]} />}
         <MapMarker longitude={lng} latitude={lat}>
           <MarkerContent>
-            <div className="size-5 rounded-full border-2 border-white bg-red-600 shadow-lg ring-4 ring-red-600/25" />
+            <div className="size-5 rounded-full border-2 border-white bg-critical shadow-md ring-4 ring-critical/25" />
             {label && <MarkerLabel position="bottom">{label}</MarkerLabel>}
           </MarkerContent>
         </MapMarker>
         {hospitals.map((h) => (
           <MapMarker key={h.id} longitude={h.lng} latitude={h.lat}>
             <MarkerContent>
-              <div className="grid size-7 place-items-center rounded-full border-2 border-white bg-blue-600 text-white shadow"><Hospital className="size-3.5" /></div>
+              <div className="grid size-7 place-items-center rounded-full border-2 border-white bg-info text-white shadow"><Hospital className="size-3.5" /></div>
             </MarkerContent>
             <MarkerTooltip>{h.name}</MarkerTooltip>
             <MarkerPopup><p className="font-medium">{h.name}</p><p className="text-xs text-muted-foreground">{h.distance} km · ~{h.eta} min</p></MarkerPopup>

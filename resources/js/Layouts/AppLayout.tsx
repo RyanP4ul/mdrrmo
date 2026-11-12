@@ -1,71 +1,107 @@
-import { Link, usePage } from '@inertiajs/react';
+import { Link, router, usePage } from '@inertiajs/react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
-  Activity, AlertTriangle, Bell, CalendarDays, ClipboardList, FileText, History, LayoutDashboard, Map as MapIcon,
-  ChevronRight, LogOut, Megaphone, Menu, Navigation, Radio, Shield, Siren, Users, type LucideIcon,
+  Activity, AlertTriangle, Bell, CalendarDays, ChevronDown, ClipboardList, FileText, History, LayoutDashboard,
+  LogOut, Map as MapIcon, Menu, Navigation, Radio, Shield, Siren, Truck, Users, type LucideIcon,
 } from 'lucide-react';
-import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { PageProps, Role } from '@/types';
 import { VoiceCalls } from '@/components/VoiceCalls';
 
 type Item = { label: string; href: string; icon: LucideIcon; exact?: boolean };
+type Group = { label?: string; items: Item[] };
 
-const NAV: Record<Role, Item[]> = {
+/* Navigation is grouped by what the user is doing, not listed flat. */
+const NAV: Record<Role, Group[]> = {
   admin: [
-    { label: 'Dashboard', href: '/admin', icon: LayoutDashboard, exact: true },
-    { label: 'Reports', href: '/admin/reports', icon: FileText },
-    { label: 'Users', href: '/admin/users', icon: Users },
-    { label: 'Response Teams', href: '/admin/response-teams', icon: Shield },
-    { label: 'Incident Types', href: '/admin/incident-types', icon: AlertTriangle },
-    { label: 'Announcements', href: '/admin/announcements', icon: Megaphone },
-    { label: 'Audit Logs', href: '/admin/audit-logs', icon: Activity },
+    { items: [{ label: 'Dashboard', href: '/admin', icon: LayoutDashboard, exact: true }] },
+    { label: 'Operations', items: [
+      { label: 'Reports', href: '/admin/reports', icon: FileText },
+      { label: 'Audit Logs', href: '/admin/audit-logs', icon: Activity },
+    ] },
+    { label: 'Management', items: [
+      { label: 'Users', href: '/admin/users', icon: Users },
+      { label: 'Response Teams', href: '/admin/response-teams', icon: Shield },
+      { label: 'Vehicle Management', href: '/admin/vehicles', icon: Truck },
+      { label: 'Incident Types', href: '/admin/incident-types', icon: AlertTriangle },
+    ] },
   ],
   dispatcher: [
-    { label: 'Operations', href: '/dispatcher', icon: Radio, exact: true },
-    { label: 'Live Map', href: '/dispatcher/map', icon: MapIcon },
-    { label: 'Reports', href: '/dispatcher/reports', icon: FileText },
-    { label: 'Responders', href: '/dispatcher/responders', icon: Shield },
-    { label: 'Schedule', href: '/dispatcher/schedule', icon: CalendarDays },
-    { label: 'Announcements', href: '/dispatcher/announcements', icon: Megaphone },
+    { items: [{ label: 'Operations', href: '/dispatcher', icon: Radio, exact: true }] },
+    { label: 'Incidents', items: [
+      { label: 'Live Map', href: '/dispatcher/map', icon: MapIcon },
+      { label: 'Reports', href: '/dispatcher/reports', icon: FileText },
+    ] },
+    { label: 'Coordination', items: [
+      { label: 'Responders', href: '/dispatcher/responders', icon: Shield },
+      { label: 'Schedule', href: '/dispatcher/schedule', icon: CalendarDays },
+    ] },
   ],
   'driver/responder': [
-    { label: 'Dashboard', href: '/driver', icon: LayoutDashboard, exact: true },
-    { label: 'Assignments', href: '/driver/assignments', icon: ClipboardList },
-    { label: 'Patient Reports', href: '/driver/reports', icon: FileText },
-    { label: 'Tracking', href: '/driver/tracking', icon: Navigation },
+    { label: 'Operations', items: [
+      { label: 'Dashboard', href: '/driver', icon: LayoutDashboard, exact: true },
+      { label: 'Assignments', href: '/driver/assignments', icon: ClipboardList },
+      { label: 'Patient Reports', href: '/driver/reports', icon: FileText },
+      { label: 'Tracking', href: '/driver/tracking', icon: Navigation },
+    ] },
+    { label: 'My Team', items: [
+      { label: 'My Team', href: '/driver/team', icon: Users },
+    ] },
   ],
   resident: [
-    { label: 'Home', href: '/resident', icon: LayoutDashboard, exact: true },
-    { label: 'Report Emergency', href: '/resident/report', icon: Siren },
-    { label: 'My Reports', href: '/resident/history', icon: History },
-    { label: 'Book a Service', href: '/resident/schedule', icon: CalendarDays },
-    { label: 'Notifications', href: '/resident/notifications', icon: Bell },
-    { label: 'Announcements', href: '/resident/announcements', icon: Megaphone },
+    { items: [
+      { label: 'Home', href: '/resident', icon: LayoutDashboard, exact: true },
+      { label: 'Report Emergency', href: '/resident/report', icon: Siren },
+      { label: 'My Reports', href: '/resident/history', icon: History },
+      { label: 'Book a Service', href: '/resident/schedule', icon: CalendarDays },
+      { label: 'Notifications', href: '/resident/notifications', icon: Bell },
+    ] },
   ],
 };
 
-function NavList({ items, url, onNavigate, staff = false }: { items: Item[]; url: string; onNavigate?: () => void; staff?: boolean }) {
+/** Short labels for the mobile tab bar (full labels stay in the sidebar). */
+const TAB_LABEL: Record<string, string> = {
+  'Report Emergency': 'Report', 'My Reports': 'History', 'Book a Service': 'Book', 'Notifications': 'Alerts',
+  'Patient Reports': 'Patients', 'Assignments': 'Tasks', 'My Team': 'Team',
+};
+
+const roleLabel = (role: Role) => (role === 'driver/responder' ? 'Driver / Responder' : role.charAt(0).toUpperCase() + role.slice(1));
+
+function isActive(url: string, item: Item) {
+  const path = url.split('?')[0];
+  return item.exact ? path === item.href : path === item.href || path.startsWith(item.href + '/');
+}
+
+function NavList({ groups, url, onNavigate }: { groups: Group[]; url: string; onNavigate?: () => void }) {
   return (
-    <nav className="flex-1 space-y-1 overflow-y-auto p-4" aria-label="Main">
-      {staff && <p className="px-3 pb-3 pt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Workspace</p>}
-      {items.map(({ label, href, icon: Icon, exact }, index) => {
-        const active = exact ? url === href || url.startsWith(href + '?') : url.startsWith(href);
-        return (
-          <div key={href}>
-            {staff && index === 3 && <p className="mb-3 mt-7 px-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">{href.startsWith('/admin') ? 'Management' : 'Coordination'}</p>}
-            <Link href={href} onClick={onNavigate} aria-current={active ? 'page' : undefined}
-              className={cn('flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400',
-                staff ? active ? 'bg-blue-500/15 text-blue-200 ring-1 ring-blue-400/25' : 'text-slate-300 hover:bg-white/5 hover:text-white'
-                  : active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
-              <Icon className="size-[18px] shrink-0" /> <span className="flex-1">{label}</span>
-              {active && <ChevronRight className="size-3.5" />}
-            </Link>
-          </div>
-        );
-      })}
+    <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4" aria-label="Main">
+      {groups.map((group, index) => (
+        <div key={group.label ?? index}>
+          {group.label && <p className="eyebrow px-2.5 pb-1.5">{group.label}</p>}
+          <ul className="space-y-0.5">
+            {group.items.map((item) => {
+              const active = isActive(url, item);
+              return (
+                <li key={item.href}>
+                  <Link href={item.href} onClick={onNavigate} aria-current={active ? 'page' : undefined}
+                    className={cn('relative flex min-h-10 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors lg:min-h-9',
+                      active ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-sidebar-foreground hover:bg-sidebar-accent/60')}>
+                    {active && <span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" />}
+                    <item.icon className={cn('size-4 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} aria-hidden="true" />
+                    {item.label}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
     </nav>
   );
 }
@@ -74,10 +110,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const { auth, flash } = usePage<PageProps>().props;
   const { url } = usePage();
   const [open, setOpen] = useState(false);
-  const items = NAV[auth.user.role];
-  const staff = auth.user.role === 'admin' || auth.user.role === 'dispatcher';
-  const currentPage = items.find((item) => item.exact ? url.split('?')[0] === item.href : url.startsWith(item.href));
-  const initials = auth.user.full_name.split(' ').filter(Boolean).slice(0, 2).map((name) => name[0]).join('');
+  const groups = NAV[auth.user.role];
+  const all = groups.flatMap((g) => g.items);
+  const current = all.find((item) => isActive(url, item));
+  const parent = groups.find((g) => g.items.includes(current as Item))?.label;
+  const tabBar = auth.user.role === 'resident' || auth.user.role === 'driver/responder';
+  const initials = auth.user.full_name.split(' ').filter(Boolean).slice(0, 2).map((name) => name[0]).join('').toUpperCase();
 
   useEffect(() => {
     if (flash?.success) toast.success(flash.success);
@@ -85,44 +123,96 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }, [flash]);
 
   const brand = (
-    <div className={cn('flex h-20 shrink-0 items-center gap-3 border-b px-6', staff && 'border-white/10')}>
-      <div className={cn('grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground', staff && 'bg-blue-500 text-white')}><Siren className="size-5" /></div>
-      <div className="leading-tight"><p className="text-base font-bold tracking-wide">MDRRMO</p><p className={cn('mt-1 text-xs capitalize text-muted-foreground', staff && 'text-slate-400')}>{staff ? 'Emergency management' : auth.user.role.replace('/', ' / ')}</p></div>
-    </div>
-  );
-  const footer = (
-    <div className={cn('shrink-0 border-t p-4 text-sm', staff && 'border-white/10')}>
-      <div className="mb-3 flex items-center gap-3 px-2">
-        <span className={cn('grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary', staff && 'bg-slate-700 text-slate-100')}>{initials}</span>
-        <div className="min-w-0"><p className="truncate font-medium">{auth.user.full_name}</p><p className={cn('text-xs capitalize text-muted-foreground', staff && 'text-slate-400')}>{auth.user.role.replace('/', ' / ')}</p></div>
+    <div className="flex h-12 shrink-0 items-center gap-2.5 border-b px-4">
+      <img src="/mdrrmo-logo.webp" alt="" width={26} height={26} className="size-[26px] object-contain" />
+      <div className="min-w-0 leading-tight">
+        <p className="text-sm font-semibold tracking-wide">MDRRMO</p>
       </div>
-      <Link href="/logout" method="post" as="button" className={cn('flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground', staff && 'text-slate-400 hover:bg-white/5 hover:text-white')}><LogOut className="size-4" />Sign out</Link>
     </div>
   );
 
   return (
-    <VoiceCalls user={auth.user}><div className={cn('min-h-screen bg-muted/30 lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]', staff && 'staff-workspace')}>
-      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-background focus:p-3">Skip to content</a>
-      <aside className={cn('sticky top-0 hidden h-screen flex-col border-r bg-background lg:flex', staff && 'border-slate-800 bg-slate-950 text-white')}>{brand}<NavList items={items} url={url} staff={staff} />{footer}</aside>
+    <VoiceCalls user={auth.user}>
+      <div className="min-h-dvh lg:grid lg:grid-cols-[14.5rem_minmax(0,1fr)]">
+        <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:border focus:bg-card focus:px-3 focus:py-2 focus:text-sm">Skip to content</a>
 
-      <div className="min-w-0">
-      <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur sm:px-8">
-        <div className="lg:hidden">
-        <Button variant="ghost" size="icon" aria-label="Open menu" onClick={() => setOpen(true)}><Menu className="size-5" /></Button>
+        <aside className="sticky top-0 hidden h-dvh flex-col border-r bg-sidebar text-sidebar-foreground lg:flex">
+          {brand}
+          <NavList groups={groups} url={url} />
+        </aside>
+
+        <div className="min-w-0">
+          <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background px-3 sm:px-6 lg:px-8">
+            {!tabBar && (
+              <Button variant="ghost" size="icon" className="-ml-1 lg:hidden" aria-label="Open navigation" onClick={() => setOpen(true)}>
+                <Menu className="size-5" />
+              </Button>
+            )}
+            {tabBar && <img src="/mdrrmo-logo.webp" alt="" width={24} height={24} className="size-6 object-contain lg:hidden" />}
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
+              {parent && <><span className="hidden text-muted-foreground sm:inline">{parent}</span><span aria-hidden="true" className="hidden text-muted-foreground sm:inline">/</span></>}
+              <span className="truncate font-medium">{current?.label ?? 'Workspace'}</span>
+            </div>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="gap-2 px-1.5 max-lg:h-11" aria-label="Account menu">
+                  <span className="grid size-7 place-items-center rounded-md bg-primary text-[11px] font-semibold text-primary-foreground" aria-hidden="true">{initials}</span>
+                  <span className="hidden max-w-40 truncate text-sm sm:inline">{auth.user.full_name}</span>
+                  <ChevronDown className="hidden size-3.5 text-muted-foreground sm:block" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="font-normal">
+                  <p className="truncate text-sm font-medium text-foreground">{auth.user.full_name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{auth.user.email}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{roleLabel(auth.user.role)}</p>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => router.post('/logout')}>
+                  <LogOut className="size-4" /> Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </header>
+
+          {!tabBar && (
+            <Sheet open={open} onOpenChange={setOpen}>
+              <SheetContent side="left" className="flex w-72 flex-col gap-0 bg-sidebar p-0 text-sidebar-foreground">
+                <SheetTitle className="sr-only">Navigation</SheetTitle>
+                <SheetDescription className="sr-only">Move between sections of the workspace</SheetDescription>
+                {brand}
+                <NavList groups={groups} url={url} onNavigate={() => setOpen(false)} />
+              </SheetContent>
+            </Sheet>
+          )}
+
+          <main id="main-content" tabIndex={-1} className={cn('mx-auto w-full max-w-[1400px] space-y-5 px-4 py-5 outline-none sm:px-6 lg:px-8 lg:py-6', tabBar && 'pb-24 lg:pb-6')}>
+            {children}
+          </main>
         </div>
-        <div className="flex min-w-0 flex-1 items-center gap-2 text-sm"><span className="hidden text-muted-foreground sm:inline">{auth.user.role === 'admin' ? 'Administration' : auth.user.role === 'dispatcher' ? 'Dispatch workspace' : 'MDRRMO'}</span><ChevronRight className="hidden size-3.5 text-muted-foreground sm:block" /><span className="truncate font-medium">{currentPage?.label ?? 'Workspace'}</span></div>
-        <span className="hidden text-xs text-muted-foreground md:block">{auth.user.full_name}</span>
-        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary" aria-hidden="true">{initials}</span>
-      </header>
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="left" className={cn('flex w-72 flex-col p-0', staff && 'border-slate-800 bg-slate-950 text-white [&>button]:text-white')}>
-          <SheetTitle className="sr-only">Navigation</SheetTitle>{brand}<NavList items={items} url={url} staff={staff} onNavigate={() => setOpen(false)} />{footer}
-        </SheetContent>
-      </Sheet>
 
-      <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1440px] space-y-6 p-4 outline-none sm:p-6 xl:p-8">{children}</main>
+        {tabBar && (
+          <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-30 border-t bg-card pb-[env(safe-area-inset-bottom)] lg:hidden">
+            <ul className="mx-auto flex max-w-xl">
+              {all.map((item) => {
+                const active = isActive(url, item);
+                return (
+                  <li key={item.href} className="flex-1">
+                    <Link href={item.href} aria-current={active ? 'page' : undefined}
+                      className={cn('flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors',
+                        active ? 'text-primary' : 'text-muted-foreground')}>
+                      <item.icon className="size-5" aria-hidden="true" />
+                      {TAB_LABEL[item.label] ?? item.label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+        )}
       </div>
-      <Toaster richColors position="top-right" />
-    </div></VoiceCalls>
+      <Toaster richColors closeButton position="top-right" />
+    </VoiceCalls>
   );
 }
