@@ -62,11 +62,15 @@ interface U {
     sex: string | null;
     role: string;
     status: string;
+    shift_team?: "day" | "night" | null;
+    house_no?: string | null;
+    street?: string | null;
     barangay: string | null;
     city: string | null;
     province: string | null;
     id_type: string | null;
     id_document_path: string | null;
+    id_document_url?: string | null;
     registration_status: string | null;
     full_name: string;
 }
@@ -87,6 +91,7 @@ const blank = {
     sex: "",
     role: "dispatcher",
     status: "active",
+    shift_team: "",
     barangay: "",
     city: "Meycauayan",
     province: "Bulacan",
@@ -102,10 +107,19 @@ export default function Index({ employees, residents, filters }: Props) {
         },
         ["employees", "residents"],
     );
+    const [tab, setTab] = useState<string>(() => {
+        if (filters.res_search || filters.reg) return "residents";
+        if (typeof window !== "undefined") {
+            const params = new URLSearchParams(window.location.search);
+            if (params.has("res_page")) return "residents";
+        }
+        return "employees";
+    });
     const [editing, setEditing] = useState<U | null>(null);
     const [open, setOpen] = useState(false);
     const [del, setDel] = useState<U | null>(null);
     const [view, setView] = useState<U | null>(null);
+    const [accept, setAccept] = useState<U | null>(null);
     const [decline, setDecline] = useState<U | null>(null);
     const form = useForm<typeof blank>(blank);
     const err = form.errors as Record<string, string>;
@@ -133,6 +147,10 @@ export default function Index({ employees, residents, filters }: Props) {
     };
     const save = () => {
         const o = { preserveScroll: true, onSuccess: () => setOpen(false) };
+        form.transform((data) => ({
+            ...data,
+            shift_team: data.shift_team || null,
+        }));
         editing
             ? form.put(route("admin.users.update", editing.account_key), o)
             : form.post(route("admin.users.store"), o);
@@ -154,7 +172,7 @@ export default function Index({ employees, residents, filters }: Props) {
                 title="User Management"
                 description="Employee accounts and resident registrations"
             />
-            <Tabs defaultValue="employees" className="space-y-4">
+            <Tabs value={tab} onValueChange={setTab} className="space-y-4">
                 <TabsList>
                     <TabsTrigger value="employees">
                         Employees ({employees.total})
@@ -297,7 +315,7 @@ export default function Index({ employees, residents, filters }: Props) {
                                             <TableHead className="hidden md:table-cell">Barangay</TableHead>
                                             <TableHead className="hidden sm:table-cell">Contact</TableHead>
                                             <TableHead>Registration</TableHead>
-                                            <TableHead className="w-40 text-center">
+                                            <TableHead className="w-28 text-center">
                                                 Actions
                                             </TableHead>
                                         </TableRow>
@@ -334,36 +352,6 @@ export default function Index({ employees, residents, filters }: Props) {
                                                     >
                                                         <Eye className="size-4" />
                                                     </Button>
-                                                    {u.registration_status ===
-                                                        "pending" && (
-                                                        <>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                aria-label="Accept"
-                                                                className="text-ok"
-                                                                onClick={() =>
-                                                                    review(
-                                                                        u,
-                                                                        "accepted",
-                                                                    )
-                                                                }
-                                                            >
-                                                                <Check className="size-4" />
-                                                            </Button>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                aria-label="Decline"
-                                                                className="text-destructive"
-                                                                onClick={() =>
-                                                                    setDecline(u)
-                                                                }
-                                                            >
-                                                                <X className="size-4" />
-                                                            </Button>
-                                                        </>
-                                                    )}
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
@@ -499,6 +487,39 @@ export default function Index({ employees, residents, filters }: Props) {
                                 </SelectContent>
                             </Select>
                         </Field>
+                        {(form.data.role === "dispatcher" ||
+                            form.data.role === "driver/responder") && (
+                            <Field
+                                htmlFor="shift_team"
+                                label="Shift Team"
+                                error={err.shift_team}
+                            >
+                                <Select
+                                    value={form.data.shift_team || "none"}
+                                    onValueChange={(v) =>
+                                        form.setData(
+                                            "shift_team",
+                                            v === "none" ? "" : v,
+                                        )
+                                    }
+                                >
+                                    <SelectTrigger id="shift_team">
+                                        <SelectValue placeholder="Unassigned" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="none">
+                                            Unassigned
+                                        </SelectItem>
+                                        <SelectItem value="day">
+                                            Day Team
+                                        </SelectItem>
+                                        <SelectItem value="night">
+                                            Night Team
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </Field>
+                        )}
                     </div>
                     <DialogFooter>
                         <Button
@@ -515,9 +536,14 @@ export default function Index({ employees, residents, filters }: Props) {
             </Dialog>
 
             <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
                     <DialogHeader>
-                        <DialogTitle>{view?.full_name}</DialogTitle>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <DialogTitle>{view?.full_name}</DialogTitle>
+                            {view?.registration_status && (
+                                <StatusBadge value={view.registration_status} />
+                            )}
+                        </div>
                         <DialogDescription>{view?.email}</DialogDescription>
                     </DialogHeader>
                     <dl className="space-y-1.5 text-sm">
@@ -528,24 +554,85 @@ export default function Index({ employees, residents, filters }: Props) {
                             ["Sex", view?.sex],
                             [
                                 "Address",
-                                [view?.barangay, view?.city, view?.province]
+                                [
+                                    [view?.house_no, view?.street]
+                                        .filter(Boolean)
+                                        .join(" "),
+                                    view?.barangay,
+                                    view?.city,
+                                    view?.province,
+                                ]
                                     .filter(Boolean)
-                                    .join(", "),
+                                    .join(", ") || "Not provided",
                             ],
                             ["ID type", view?.id_type],
                         ].map(([k, v]) =>
                             v ? (
-                                <div key={k} className="flex justify-between">
-                                    <dt className="text-muted-foreground">
+                                <div key={k} className="flex justify-between gap-4">
+                                    <dt className="shrink-0 text-muted-foreground">
                                         {k}
                                     </dt>
-                                    <dd className="font-medium">{v}</dd>
+                                    <dd className="text-right font-medium">{v}</dd>
                                 </div>
                             ) : null,
                         )}
                     </dl>
+                    {view?.id_document_url && (
+                        <div className="space-y-1.5 border-t pt-3">
+                            <p className="text-xs font-medium text-muted-foreground">
+                                Uploaded ID
+                            </p>
+                            <a
+                                href={view.id_document_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block overflow-hidden rounded-md border bg-muted/30"
+                            >
+                                <img
+                                    src={view.id_document_url}
+                                    alt={`ID document for ${view.full_name}`}
+                                    className="max-h-64 w-full object-contain"
+                                />
+                            </a>
+                        </div>
+                    )}
+                    {view?.registration_status === "pending" && (
+                        <DialogFooter className="border-t pt-3">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                onClick={() => setDecline(view)}
+                            >
+                                <X className="size-4" aria-hidden="true" />
+                                Decline
+                            </Button>
+                            <Button
+                                type="button"
+                                className="bg-[#17703f] text-white hover:bg-[#135c33]"
+                                onClick={() => setAccept(view)}
+                            >
+                                <Check className="size-4" aria-hidden="true" />
+                                Accept
+                            </Button>
+                        </DialogFooter>
+                    )}
                 </DialogContent>
             </Dialog>
+
+            <ConfirmDialog
+                open={!!accept}
+                onOpenChange={(o) => !o && setAccept(null)}
+                title="Accept registration"
+                description={`${accept?.full_name}'s registration will be accepted and they will be able to submit reports and book services.`}
+                confirmLabel="Accept"
+                variant="default"
+                onConfirm={() => {
+                    review(accept!, "accepted");
+                    setAccept(null);
+                    setView(null);
+                }}
+            />
 
             <ConfirmDialog
                 open={!!decline}
@@ -556,14 +643,16 @@ export default function Index({ employees, residents, filters }: Props) {
                 onConfirm={() => {
                     review(decline!, "declined");
                     setDecline(null);
+                    setView(null);
                 }}
             />
 
             <ConfirmDialog
                 open={!!del}
                 onOpenChange={(o) => !o && setDel(null)}
-                title="Delete user"
-                description={`${del?.full_name} will be permanently removed.`}
+                title="Move user to Archives"
+                description={`${del?.full_name} will be moved to Archives and signed out. You can restore them or start the 30-day permanent deletion countdown inside Archives.`}
+                confirmLabel="Archive"
                 onConfirm={() => {
                     router.delete(
                         route("admin.users.destroy", del!.account_key),

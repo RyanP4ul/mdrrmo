@@ -44,17 +44,23 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->grou
     Route::get('reports/operations/summary', [Admin\EmergencyReportController::class, 'operationsSummary'])->name('reports.operations.summary');
     Route::get('reports/operations/pdf', [Admin\EmergencyReportController::class, 'operationsPdf'])->name('reports.operations.pdf');
     Route::get('reports/{report}/driver-form', DriverFormController::class)->name('reports.driver-form');
+    Route::patch('reports/{report}/archive', [Admin\EmergencyReportController::class, 'archive'])->name('reports.archive');
     Route::resource('reports', Admin\EmergencyReportController::class)->only(['index', 'show', 'update']);
     Route::resource('users', Admin\UserController::class)
         ->only(['index', 'store', 'update', 'destroy'])
         ->parameters(['users' => 'account']);
     Route::patch('residents/{account}/review', [Admin\UserController::class, 'review'])->name('residents.review');
+    Route::get('residents/{account}/id-document', [Admin\UserController::class, 'idDocument'])->name('residents.id-document');
     Route::get('response-teams', [Admin\ResponseTeamController::class, 'index'])->name('response-teams.index');
     Route::resource('vehicles', Admin\VehicleController::class)->only(['index', 'store', 'update', 'destroy']);
     Route::patch('vehicles/{vehicle}/status', [Admin\VehicleController::class, 'updateStatus'])->name('vehicles.status');
     Route::patch('maintenance-reports/{maintenanceReport}/review', [Admin\VehicleController::class, 'reviewMaintenanceReport'])->name('maintenance-reports.review');
     Route::resource('incident-types', Admin\IncidentTypeController::class)->only(['index', 'store', 'update', 'destroy']);
     Route::get('audit-logs', [Admin\AuditLogController::class, 'index'])->name('audit-logs.index');
+    Route::get('archives', [Admin\ArchiveController::class, 'index'])->name('archives.index');
+    Route::patch('archives/{type}/{key}/restore', [Admin\ArchiveController::class, 'restore'])->name('archives.restore');
+    Route::patch('archives/{type}/{key}/schedule-delete', [Admin\ArchiveController::class, 'scheduleDelete'])->name('archives.schedule-delete');
+    Route::patch('archives/{type}/{key}/cancel-delete', [Admin\ArchiveController::class, 'cancelDelete'])->name('archives.cancel-delete');
 });
 
 // ── Dispatcher ───────────────────────────────────────────────────
@@ -63,12 +69,15 @@ Route::middleware(['auth', 'role:dispatcher'])->prefix('dispatcher')->name('disp
     Route::post('dispatch', [Dispatcher\DashboardController::class, 'store'])->name('dispatch.store');
     Route::get('reports', [Dispatcher\ReportController::class, 'index'])->name('reports.index');
     Route::get('reports/{report}/driver-form', DriverFormController::class)->name('reports.driver-form');
+    Route::get('reports/{report}/photo', [Dispatcher\ReportController::class, 'photo'])->name('reports.photo');
     Route::get('reports/{report}', [Dispatcher\ReportController::class, 'show'])->name('reports.show');
     Route::post('reports/{report}/assign', [Dispatcher\ReportController::class, 'assign'])->name('reports.assign');
     Route::patch('reports/{report}/acknowledge', [Dispatcher\ReportController::class, 'acknowledge'])->name('reports.acknowledge');
     Route::patch('reports/{report}/invalid', [Dispatcher\ReportController::class, 'invalidate'])->name('reports.invalid');
     Route::get('responders', [Dispatcher\ResponderController::class, 'index'])->name('responders.index');
     Route::post('responders', [Dispatcher\ResponderController::class, 'store'])->name('responders.store');
+    Route::patch('responders/shift-roster/{driver}', [Dispatcher\ResponderController::class, 'updateShiftRoster'])
+        ->name('responders.shift-roster.update');
     Route::put('responders/{team}', [Dispatcher\ResponderController::class, 'update'])->name('responders.update');
     Route::delete('responders/{team}', [Dispatcher\ResponderController::class, 'destroy'])->name('responders.destroy');
     Route::post('responders/{team}/shifts', [Dispatcher\ResponderController::class, 'storeShift'])->name('shifts.store');
@@ -101,6 +110,7 @@ Route::middleware(['auth', 'role:resident'])->prefix('resident')->name('resident
     Route::get('/', [Resident\ResidentController::class, 'dashboard'])->name('dashboard');
     Route::get('report', [Resident\ResidentController::class, 'createReport'])->name('report');
     Route::post('report', [Resident\ResidentController::class, 'storeReport'])->name('report.store');
+    Route::patch('report/{report}/withdraw', [Resident\ResidentController::class, 'withdrawReport'])->name('report.withdraw');
     Route::get('history', [Resident\ResidentController::class, 'history'])->name('history');
     Route::get('schedule', [Resident\ResidentController::class, 'schedule'])->name('schedule');
     Route::post('schedule', [Resident\ResidentController::class, 'storeSchedule'])->name('schedule.store');

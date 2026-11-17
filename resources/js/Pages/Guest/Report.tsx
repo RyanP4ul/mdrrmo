@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Field } from '@/components/Field';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 interface IncidentType { id: number; name: string; description: string | null }
 
@@ -84,9 +85,12 @@ export default function GuestReport() {
                         <img src="/mdrrmo-logo.webp" alt="" width={32} height={32} className="size-8 object-contain" />
                         <span className="text-sm font-semibold tracking-wide">MDRRMO</span>
                     </div>
-                    <Link href={route('login')} className="inline-flex min-h-11 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-                        <ArrowLeft className="size-4" aria-hidden="true" />Back to sign in
-                    </Link>
+                    <div className="flex items-center gap-2">
+                        <ThemeToggle />
+                        <Link href={route('login')} className="inline-flex min-h-11 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+                            <ArrowLeft className="size-4" aria-hidden="true" />Back to sign in
+                        </Link>
+                    </div>
                 </div>
 
                 {reference ? (
@@ -133,7 +137,12 @@ export default function GuestReport() {
                                     <Input id="guest-location" required maxLength={255} value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} />
                                 </Field>
                                 <Field label="Pin the location" hint="Drag the pin to the incident location or choose Use my location." error={err('lat') ?? err('lng')}>
-                                    <LocationPicker lat={form.lat} lng={form.lng} onChange={(lat, lng) => { if (!inFlight.current) setForm((current) => ({ ...current, lat, lng })); }} />
+                                    <LocationPicker
+                                        lat={form.lat}
+                                        lng={form.lng}
+                                        onChange={(lat, lng) => { if (!inFlight.current) setForm((current) => ({ ...current, lat, lng })); }}
+                                        onAddress={(location) => { if (!inFlight.current) setForm((current) => ({ ...current, location })); }}
+                                    />
                                 </Field>
                                 <div className="grid gap-4 border-t pt-4 sm:grid-cols-2">
                                     <Field label="Your full name" htmlFor="guest-name" required error={err('reporter_name')}>

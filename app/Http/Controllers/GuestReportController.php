@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\EmergencyReportUpdated;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
 use Illuminate\Http\JsonResponse;
@@ -51,6 +52,8 @@ class GuestReportController extends Controller
             'reported_by_type' => null,
             'reported_at' => now(),
         ]);
+
+        EmergencyReportUpdated::dispatch($report, null, true);
 
         return response()->json([
             'reference' => $report->reference,

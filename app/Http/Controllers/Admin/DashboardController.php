@@ -52,6 +52,7 @@ class DashboardController extends Controller
             'recentActivity' => AuditLog::latest('created_at')->limit(15)->get()->map(fn ($l) => [
                 'id' => $l->id, 'action' => $l->details, 'user' => $l->user_name, 'time' => $l->created_at->diffForHumans(),
             ]),
+            'googleMapsApiKey' => config('services.google_maps.key'),
         ]);
     }
 }

@@ -3,6 +3,9 @@
 namespace Tests\Feature;
 
 use App\Events\EmergencyReportUpdated;
+use App\Models\Account;
+use App\Models\AdminUser;
+use App\Models\DispatcherUser;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
@@ -13,7 +16,9 @@ use App\Models\TeamMember;
 use App\Models\Vehicle;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -367,6 +372,78 @@ class MobileApiTest extends TestCase
 
         $this->assertDatabaseCount('emergency_reports', 0);
         $this->assertDatabaseCount('resident_notifications', 0);
+    }
+
+    public function test_resident_report_accepts_optional_photo_stored_on_r2_and_visible_to_dispatcher(): void
+    {
+        Storage::fake('r2');
+        $resident = ResidentUser::factory()->accepted()->create();
+        $dispatcher = DispatcherUser::factory()->create();
+        $type = $this->createIncidentType();
+
+        Sanctum::actingAs($resident, ['*']);
+        $photo = UploadedFile::fake()->image('incident.jpg', 640, 480);
+
+        $response = $this->post('/api/resident/reports', [
+            'incident_type_id' => $type->id,
+            'reporter_type' => 'victim',
+            'location' => '12 Main Street, Balagtas',
+            'lat' => 14.8153,
+            'lng' => 120.9094,
+            'description' => 'Fallen tree blocking the road.',
+            'photo' => $photo,
+        ], [
+            'Accept' => 'application/json',
+            'Idempotency-Key' => (string) Str::uuid(),
+        ])->assertCreated();
+
+        $report = EmergencyReport::findOrFail($response->json('report.id'));
+        $this->assertNotNull($report->photo_path);
+        Storage::disk('r2')->assertExists($report->photo_path);
+
+        $this->actingAs($dispatcher)
+            ->get(route('dispatcher.dashboard'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('Dispatcher/Dashboard')
+                ->where('incoming.0.id', $report->id)
+                ->where('incoming.0.photo_url', route('dispatcher.reports.photo', $report)));
+
+        $this->actingAs($dispatcher)
+            ->get(route('dispatcher.reports.photo', $report))
+            ->assertOk();
+    }
+
+    public function test_mobile_registration_stores_id_type_and_id_photo_on_r2_for_admin_review(): void
+    {
+        Storage::fake('r2');
+        $admin = AdminUser::factory()->create();
+        $idPhoto = UploadedFile::fake()->image('national_id.jpg', 800, 500);
+
+        $this->post('/api/auth/mobile/register', [
+            'name' => 'Maria Santos',
+            'contact' => '09171234567',
+            'address' => 'Balagtas, Bulacan',
+            'email' => 'maria@example.test',
+            'password' => 'SecurePassword123',
+            'password_confirmation' => 'SecurePassword123',
+            'consent' => '1',
+            'consent_version' => config('mobile.consent_version'),
+            'id_type' => 'National ID',
+            'id_photo' => $idPhoto,
+        ], [
+            'Accept' => 'application/json',
+            'Idempotency-Key' => (string) Str::uuid(),
+        ])->assertCreated();
+
+        $resident = ResidentUser::where('email', 'maria@example.test')->firstOrFail();
+        $this->assertSame('National ID', $resident->id_type);
+        $this->assertNotNull($resident->id_document_path);
+        Storage::disk('r2')->assertExists($resident->id_document_path);
+
+        $this->actingAs($admin)
+            ->get(route('admin.residents.id-document', Account::keyFor($resident)))
+            ->assertOk();
     }
 
     private function mobilePostJson(string $uri, array $data = [])

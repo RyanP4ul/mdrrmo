@@ -21,7 +21,10 @@ class HospitalRecommendationsTest extends TestCase
 
     private function report(DriverResponderUser $driver): EmergencyReport
     {
-        $type = IncidentType::create(['name' => 'Medical Emergency', 'description' => 'Medical incident', 'priority' => 'high']);
+        $type = IncidentType::firstOrCreate(
+            ['name' => 'Medical Emergency'],
+            ['description' => 'Medical incident', 'priority' => 'high'],
+        );
 
         return EmergencyReport::create([
             'reference' => EmergencyReport::generateReference(), 'incident_type_id' => $type->id,
@@ -83,5 +86,63 @@ class HospitalRecommendationsTest extends TestCase
         Sanctum::actingAs($driver, ['driver-read']);
         $this->getJson('/api/driver-responder/assignments/'.$report->id.'/hospitals')
             ->assertOk()->assertJsonCount(0, 'data');
+    }
+
+    public function test_driver_response_workflow_transporting_hospital_skip_and_arrived(): void
+    {
+        $this->seed(HospitalSeeder::class);
+        $driver = DriverResponderUser::factory()->create();
+        $report = $this->report($driver);
+        $otherReport = $this->report($driver);
+        Sanctum::actingAs($driver, ['driver-read', 'driver-write']);
+
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', [
+            'response_status' => 'en-route',
+        ])->assertOk()->assertJsonPath('assignment.response_status', 'en-route');
+        $this->assertNotNull(\App\Models\DispatchTrip::where('emergency_report_id', $report->id)->value('driver_acknowledged_at'));
+
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', [
+            'response_status' => 'on-scene',
+        ])->assertOk()->assertJsonPath('assignment.response_status', 'on-scene');
+
+        $hospitals = $this->getJson('/api/driver-responder/assignments/'.$report->id.'/hospitals')
+            ->assertOk()
+            ->json('data');
+        $firstHospital = $hospitals[0];
+        $secondHospital = $hospitals[1];
+
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', [
+            'response_status' => 'transporting',
+            'hospital_id' => $firstHospital['id'],
+            'destination' => $firstHospital['name'],
+        ])->assertOk()
+            ->assertJsonPath('assignment.response_status', 'transporting')
+            ->assertJsonPath('assignment.hospital_id', $firstHospital['id']);
+
+        $this->postJson('/api/driver-responder/assignments/'.$report->id.'/hospitals/'.$firstHospital['id'].'/unavailable')
+            ->assertOk()
+            ->assertJsonPath('assignment.hospital_id', $secondHospital['id'])
+            ->assertJsonMissing(['id' => $firstHospital['id']]);
+
+        // Skipping only applies to this dispatch; other reports still see all hospitals.
+        $otherHospitals = $this->getJson('/api/driver-responder/assignments/'.$otherReport->id.'/hospitals')
+            ->assertOk()
+            ->json('data');
+        $this->assertSame($firstHospital['id'], $otherHospitals[0]['id']);
+
+        // Arrived with the skipped hospital is rejected.
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', [
+            'response_status' => 'arrived',
+            'hospital_id' => $firstHospital['id'],
+        ])->assertUnprocessable();
+
+        // Arrived with the available next hospital succeeds and resolves the dispatch.
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', [
+            'response_status' => 'arrived',
+            'hospital_id' => $secondHospital['id'],
+            'destination' => $secondHospital['name'],
+        ])->assertOk()->assertJsonPath('assignment', null);
+        $this->assertSame('resolved', $report->fresh()->status);
+        $this->assertNotNull(\App\Models\DispatchTrip::where('emergency_report_id', $report->id)->value('arrived_at'));
     }
 }

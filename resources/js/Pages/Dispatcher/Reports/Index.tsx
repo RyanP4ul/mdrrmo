@@ -2,6 +2,7 @@ import { Head, Link } from '@inertiajs/react';
 import { route } from 'ziggy-js';
 import { ChevronRight, FileText, Truck } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
+import { DispatchReportRealtime } from '@/components/DispatchReportRealtime';
 import { PageHeader } from '@/components/PageHeader';
 import { FilterBar, FilterSelect } from '@/components/FilterBar';
 import { EmptyState } from '@/components/EmptyState';
@@ -32,6 +33,7 @@ export default function Index({
   return (
     <AppLayout>
       <Head title="Reports & Driver Forms" />
+      <DispatchReportRealtime reloadProps={['reports']} />
       <PageHeader
         title={tab === 'emergency' ? 'Emergency Reports' : 'Driver Forms'}
         description={

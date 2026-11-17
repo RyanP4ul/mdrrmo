@@ -9,3 +9,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('mobile:auto-dispatch')->everyMinute()->withoutOverlapping(5);
+Schedule::command('archives:purge')->dailyAt('02:00')->withoutOverlapping();

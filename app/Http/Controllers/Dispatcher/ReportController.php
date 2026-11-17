@@ -10,6 +10,7 @@ use App\Services\DispatchService;
 use App\Services\EmergencyReportWorkflow;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 
 class ReportController extends Controller
@@ -50,11 +51,25 @@ class ReportController extends Controller
         $team = $report->team ?? $this->dispatcher->autoAssignTeam();
 
         return Inertia::render('Dispatcher/Reports/Show', [
-            'report' => $report,
+            'report' => array_merge($report->toArray(), [
+                'photo_url' => $report->photo_path ? route('dispatcher.reports.photo', $report) : null,
+            ]),
             'team' => $team ? ['id' => $team->id, 'name' => $team->team_name, 'assigned' => (bool) $report->team,
                 'onShift' => $this->dispatcher->onShiftMembers($team)->map->only('id', 'name', 'role')->values()] : null,
             'teams' => ResponseTeam::where('status', 'active')->get(['id', 'team_name']),
             'hospitals' => $this->dispatcher->recommendHospitals($report),
+            'googleMapsApiKey' => config('services.google_maps.key'),
+        ]);
+    }
+
+    public function photo(EmergencyReport $report)
+    {
+        Gate::authorize('view', $report);
+        abort_unless($report->photo_path && Storage::disk('r2')->exists($report->photo_path), 404);
+
+        return Storage::disk('r2')->response($report->photo_path, null, [
+            'Cache-Control' => 'private, max-age=300',
+            'X-Content-Type-Options' => 'nosniff',
         ]);
     }
 

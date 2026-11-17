@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\EmergencyReportUpdated;
 use App\Http\Controllers\Resident\ResidentController;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
@@ -11,11 +12,14 @@ use App\Models\ServiceSchedule;
 use App\Services\ServiceScheduleWorkflow;
 use App\Support\MobilePage;
 use Carbon\Carbon;
+use Illuminate\Broadcasting\BroadcastException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class MobileResidentApiController extends Controller
 {
@@ -70,36 +74,58 @@ class MobileResidentApiController extends Controller
             'lat' => ['required', 'numeric', 'between:-90,90'],
             'lng' => ['required', 'numeric', 'between:-180,180'],
             'description' => ['required', 'string', 'max:2000'],
+            'photo' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
         ]);
 
-        return DB::transaction(function () use ($resident, $data): JsonResponse {
-            $incidentType = IncidentType::query()->findOrFail($data['incident_type_id']);
-            $report = $resident->reports()->create($data + [
-                'reference' => 'RPT-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
-                'status' => 'pending',
-                'priority' => $incidentType->priority,
-                'source' => 'mobile-app',
-                'reported_by' => $resident->getKey(),
-                'reported_by_type' => $resident->getMorphClass(),
-                'reporter_name' => $resident->full_name,
-                'reporter_contact' => $resident->contact_number,
-                'reported_at' => now(),
-            ]);
-            $notification = ResidentNotification::query()->create([
-                'user_id' => $resident->getKey(),
-                'type' => 'report_update',
-                'title' => 'Report received',
-                'message' => "Your report {$report->reference} has been received by MDRRMO.",
-                'related_type' => EmergencyReport::class,
-                'related_id' => $report->getKey(),
-            ]);
-            $report->load('incidentType:id,name,color');
+        unset($data['photo']);
+        $photoPath = $request->hasFile('photo')
+            ? $request->file('photo')->store('incident-photos', 'r2')
+            : null;
 
-            return response()->json([
-                'report' => $this->reportData($report),
-                'notification' => $notification,
-            ], 201);
-        });
+        try {
+            [$report, $notification] = DB::transaction(function () use ($resident, $data, $photoPath): array {
+                $incidentType = IncidentType::query()->findOrFail($data['incident_type_id']);
+                $report = $resident->reports()->create($data + [
+                    'photo_path' => $photoPath,
+                    'reference' => 'RPT-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
+                    'status' => 'pending',
+                    'priority' => $incidentType->priority,
+                    'source' => 'mobile-app',
+                    'reported_by' => $resident->getKey(),
+                    'reported_by_type' => $resident->getMorphClass(),
+                    'reporter_name' => $resident->full_name,
+                    'reporter_contact' => $resident->contact_number,
+                    'reported_at' => now(),
+                ]);
+                $notification = ResidentNotification::query()->create([
+                    'user_id' => $resident->getKey(),
+                    'type' => 'report_update',
+                    'title' => 'Report received',
+                    'message' => "Your report {$report->reference} has been received by MDRRMO.",
+                    'related_type' => EmergencyReport::class,
+                    'related_id' => $report->getKey(),
+                ]);
+                $report->load('incidentType:id,name,color');
+
+                return [$report, $notification];
+            });
+        } catch (Throwable $e) {
+            if ($photoPath) {
+                Storage::disk('r2')->delete($photoPath);
+            }
+            throw $e;
+        }
+
+        try {
+            EmergencyReportUpdated::dispatch($report, null, true);
+        } catch (BroadcastException $e) {
+            report($e);
+        }
+
+        return response()->json([
+            'report' => $this->reportData($report),
+            'notification' => $notification,
+        ], 201);
     }
 
     public function storeSchedule(Request $request, ServiceScheduleWorkflow $workflow): JsonResponse

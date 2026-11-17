@@ -12,12 +12,22 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\PersonalAccessToken;
+use Throwable;
 
 class MobileAuthController extends Controller
 {
+    private const RESIDENT_ID_TYPES = [
+        'National ID',
+        'Driver License',
+        'PhilHealth ID',
+        'Voters ID',
+        'Passport',
+    ];
+
     public function register(Request $request): JsonResponse
     {
         MobileValidation::normalizePhone($request, 'contact');
@@ -29,6 +39,8 @@ class MobileAuthController extends Controller
             'password' => ['required', 'string', 'min:8', 'max:128', 'confirmed'],
             'consent' => ['required', 'accepted'],
             'consent_version' => ['required', Rule::in([config('mobile.consent_version')])],
+            'id_type' => ['nullable', 'string', Rule::in(self::RESIDENT_ID_TYPES)],
+            'id_photo' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
         ]);
 
         $nameParts = MobileValidation::nameParts($data['name']);
@@ -40,21 +52,36 @@ class MobileAuthController extends Controller
             throw ValidationException::withMessages(['email' => 'This email address is already registered.']);
         }
 
-        $resident = ResidentUser::query()->create([
-            'first_name' => $nameParts[0],
-            'last_name' => $nameParts[1],
-            'email' => $data['email'],
-            'contact_number' => $data['contact'],
-            'street' => $data['address'],
-            'password' => $data['password'],
-            'status' => 'active',
-            'registration_status' => 'pending',
-        ]);
+        $idDocumentPath = $request->hasFile('id_photo')
+            ? $request->file('id_photo')->store('resident-ids', 'r2')
+            : null;
 
-        DB::table('resident_consents')->insert([
-            'resident_id' => $resident->getKey(), 'version' => $data['consent_version'],
-            'statement' => config('mobile.consent_text'), 'consented_at' => now(),
-        ]);
+        try {
+            DB::transaction(function () use ($nameParts, $data, $idDocumentPath): void {
+                $resident = ResidentUser::query()->create([
+                    'first_name' => $nameParts[0],
+                    'last_name' => $nameParts[1],
+                    'email' => $data['email'],
+                    'contact_number' => $data['contact'],
+                    'street' => $data['address'],
+                    'password' => $data['password'],
+                    'id_type' => $data['id_type'] ?? null,
+                    'id_document_path' => $idDocumentPath,
+                    'status' => 'active',
+                    'registration_status' => 'pending',
+                ]);
+
+                DB::table('resident_consents')->insert([
+                    'resident_id' => $resident->getKey(), 'version' => $data['consent_version'],
+                    'statement' => config('mobile.consent_text'), 'consented_at' => now(),
+                ]);
+            });
+        } catch (Throwable $e) {
+            if ($idDocumentPath) {
+                Storage::disk('r2')->delete($idDocumentPath);
+            }
+            throw $e;
+        }
 
         return response()->json([
             'message' => 'Registration submitted. Your account is waiting for review.',

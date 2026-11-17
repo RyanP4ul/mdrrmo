@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\ServiceScheduleUpdated;
 use App\Models\DriverNotification;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
@@ -23,7 +24,10 @@ class ServiceScheduleWorkflow
         return DB::transaction(function () use ($resident, $data): ServiceSchedule {
             $this->validateResidentSlot($resident, $data);
 
-            return $resident->schedules()->create(array_replace($data, ['status' => 'pending']));
+            $schedule = $resident->schedules()->create(array_replace($data, ['status' => 'pending']));
+            ServiceScheduleUpdated::dispatch($schedule, true);
+
+            return $schedule;
         }, 3);
     }
 
@@ -93,6 +97,7 @@ class ServiceScheduleWorkflow
                     $decision === 'declined' ? "Reason: {$reason}" : 'Your service request has been acknowledged. A response team will be assigned next.');
             }
             Audit::record('UPDATE_SCHEDULE', "Schedule {$record->id} {$decision}");
+            ServiceScheduleUpdated::dispatch($record);
 
             return $record;
         }, 3);
@@ -126,6 +131,7 @@ class ServiceScheduleWorkflow
             $this->notifyResident($record, 'general', 'Service '.$status, "Your {$record->service_type} response team is {$status}.");
             $this->notifyResponders($record, $status, 'Service '.$status);
             Audit::record('UPDATE_SCHEDULE', "Schedule {$record->id} {$status}");
+            ServiceScheduleUpdated::dispatch($record);
 
             return $record;
         }, 3);
@@ -143,6 +149,7 @@ class ServiceScheduleWorkflow
         $this->notifyResident($record, 'general', 'Schedule completed', "Your {$record->service_type} service on {$record->preferred_date->toFormattedDateString()} has been completed.");
         $this->notifyResponders($record, 'completed', 'Service completed');
         Audit::record('COMPLETE_SCHEDULE', "Schedule {$record->id} completed");
+        ServiceScheduleUpdated::dispatch($record);
 
         return $record;
     }
@@ -159,6 +166,7 @@ class ServiceScheduleWorkflow
             $this->notifyResident($record, 'schedule_cancelled', 'Schedule cancelled', "Your {$record->service_type} request has been cancelled.");
             $this->notifyResponders($record, 'cancelled', 'Service schedule cancelled');
             Audit::record('CANCEL_SCHEDULE', "Schedule {$record->id} cancelled");
+            ServiceScheduleUpdated::dispatch($record);
 
             return $record;
         }, 3);

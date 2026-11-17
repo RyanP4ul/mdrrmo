@@ -1,7 +1,7 @@
 import { Head, router, useForm } from '@inertiajs/react';
 import { route } from 'ziggy-js';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Pencil, Plus, Trash2, Truck, Wrench } from 'lucide-react';
-import { useState, type ChangeEvent } from 'react';
+import { CheckCircle2, ClipboardCheck, Pencil, Plus, Trash2, Truck, Wrench } from 'lucide-react';
+import { useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
 import { PageHeader } from '@/components/PageHeader';
 import { StatCard, StatGroup } from '@/components/StatCard';
@@ -26,7 +26,6 @@ import type { MaintenanceReportItem, TeamVehicle } from '@/types/website';
 interface AdminVehicle extends TeamVehicle {
   response_team_id: number | null;
   team_name: string | null;
-  raw_maintenance_warning: string | null;
 }
 
 interface TeamOption {
@@ -100,17 +99,12 @@ export default function VehiclesIndex({
     vehicle_type: string;
     response_team_id: string;
     status: string;
-    maintenance_warning: string;
-    photo: File | null;
-    _method?: string;
   }>({
     name: '',
     plate_number: '',
     vehicle_type: 'ambulance',
     response_team_id: 'none',
     status: 'available',
-    maintenance_warning: '',
-    photo: null,
   });
 
   const reviewForm = useForm({
@@ -127,8 +121,6 @@ export default function VehiclesIndex({
       vehicle_type: v?.vehicle_type ?? 'ambulance',
       response_team_id: v?.response_team_id ? String(v.response_team_id) : 'none',
       status: ['available', 'offline', 'maintenance'].includes(v?.status ?? '') ? v!.status : 'available',
-      maintenance_warning: v?.raw_maintenance_warning ?? '',
-      photo: null,
     });
     setFormOpen(true);
   };
@@ -139,26 +131,16 @@ export default function VehiclesIndex({
       response_team_id: vehicleForm.data.response_team_id === 'none' ? null : Number(vehicleForm.data.response_team_id),
     };
     if (editing) {
-      router.post(
-        route('admin.vehicles.update', editing.id),
-        { ...payload, _method: 'PUT' },
-        { preserveScroll: true, forceFormData: true, onSuccess: () => setFormOpen(false) },
-      );
+      router.put(route('admin.vehicles.update', editing.id), payload, {
+        preserveScroll: true,
+        onSuccess: () => setFormOpen(false),
+      });
     } else {
       router.post(route('admin.vehicles.store'), payload, {
         preserveScroll: true,
-        forceFormData: true,
         onSuccess: () => setFormOpen(false),
       });
     }
-  };
-
-  const changeQuickStatus = (vehicle: AdminVehicle, nextStatus: string) => {
-    router.patch(
-      route('admin.vehicles.status', vehicle.id),
-      { status: nextStatus, maintenance_warning: vehicle.raw_maintenance_warning },
-      { preserveScroll: true },
-    );
   };
 
   const openReview = (report: MaintenanceReportItem) => {
@@ -256,7 +238,6 @@ export default function VehiclesIndex({
                     <TableHead>Plate Number</TableHead>
                     <TableHead>Response Team</TableHead>
                     <TableHead>Status & Availability</TableHead>
-                    <TableHead>Maintenance Warning</TableHead>
                     <TableHead className="w-28 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -264,20 +245,11 @@ export default function VehiclesIndex({
                   {vehicles.data.map((v) => (
                     <TableRow key={v.id}>
                       <TableCell>
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-11 w-16 shrink-0 items-center justify-center overflow-hidden rounded border bg-muted">
-                            {v.photo_url ? (
-                              <img src={v.photo_url} alt={v.plate_number} className="size-full object-cover" />
-                            ) : (
-                              <Truck className="size-5 text-muted-foreground" aria-hidden="true" />
-                            )}
-                          </div>
-                          <div>
-                            <p className="font-medium">{v.name}</p>
-                            <p className="text-xs capitalize text-muted-foreground">
-                              {v.vehicle_type.replace('-', ' ')}
-                            </p>
-                          </div>
+                        <div>
+                          <p className="font-medium">{v.name}</p>
+                          <p className="text-xs capitalize text-muted-foreground">
+                            {v.vehicle_type.replace('-', ' ')}
+                          </p>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -298,31 +270,7 @@ export default function VehiclesIndex({
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2">
-                          <StatusBadge value={v.status} />
-                          {['available', 'offline', 'maintenance'].includes(v.status) && (
-                            <Select value={v.status} onValueChange={(next) => changeQuickStatus(v, next)}>
-                              <SelectTrigger className="h-7 w-36 text-xs" aria-label={`Status for ${v.plate_number}`}>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="available">Available</SelectItem>
-                                <SelectItem value="maintenance">Under Maintenance</SelectItem>
-                                <SelectItem value="offline">Offline</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="max-w-64">
-                        {v.has_maintenance_warning ? (
-                          <span className="flex items-start gap-1.5 text-xs text-warning">
-                            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                            <span className="line-clamp-2">{v.maintenance_warning}</span>
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">No active warnings</span>
-                        )}
+                        <StatusBadge value={v.status} />
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
@@ -441,7 +389,7 @@ export default function VehiclesIndex({
           <DialogHeader>
             <DialogTitle>{editing ? `Edit vehicle · ${editing.plate_number}` : 'Add vehicle'}</DialogTitle>
             <DialogDescription>
-              Configure the ambulance photo, plate number, assigned response team, and availability/maintenance status.
+              Configure the plate number, assigned response team, and availability/maintenance status.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3.5">
@@ -514,37 +462,6 @@ export default function VehiclesIndex({
                   ))}
                 </SelectContent>
               </Select>
-            </Field>
-
-            <Field
-              label="Ambulance photo"
-              htmlFor="v-photo"
-              hint="JPG, PNG, or WebP up to 5 MB. Shown in My Team on Web and Mobile."
-              error={vErrors.photo}
-            >
-              <Input
-                id="v-photo"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  vehicleForm.setData('photo', e.target.files?.[0] ?? null)
-                }
-              />
-            </Field>
-
-            <Field
-              label="Maintenance warning / advisory note"
-              htmlFor="v-warning"
-              hint="Displayed as a maintenance warning banner to the assigned team."
-              error={vErrors.maintenance_warning}
-            >
-              <Textarea
-                id="v-warning"
-                rows={2}
-                placeholder="Optional maintenance warning or scheduled service advisory..."
-                value={vehicleForm.data.maintenance_warning}
-                onChange={(e) => vehicleForm.setData('maintenance_warning', e.target.value)}
-              />
             </Field>
           </div>
           <DialogFooter>
@@ -633,8 +550,9 @@ export default function VehiclesIndex({
       <ConfirmDialog
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
-        title="Remove vehicle"
-        description={`Remove ${deleting?.plate_number} from the fleet?`}
+        title="Move vehicle to Archives"
+        description={`${deleting?.plate_number} will be moved to Archives. You can restore it or schedule 30-day permanent deletion from Archives.`}
+        confirmLabel="Archive"
         onConfirm={() => {
           if (deleting) {
             router.delete(route('admin.vehicles.destroy', deleting.id), { preserveScroll: true });

@@ -17,9 +17,9 @@ interface Log { id: number; user_name: string; action: string; details: string; 
 
 /* Same semantic palette as everywhere else: destructive = critical, changes = warning, sign-in = ok, creation = info. */
 const tone = (a: string) =>
-  a.startsWith('DELETE') ? 'bg-critical-soft text-critical'
-  : a.startsWith('UPDATE') ? 'bg-warning-soft text-warning'
-  : a.startsWith('CREATE') ? 'bg-info-soft text-info'
+  a.startsWith('DELETE') || a.startsWith('PERMANENT_DELETE') ? 'bg-critical-soft text-critical'
+  : a.startsWith('UPDATE') || a.startsWith('ARCHIVE') || a.startsWith('SCHEDULE_DELETE') ? 'bg-warning-soft text-warning'
+  : a.startsWith('CREATE') || a.startsWith('RESTORE') || a.startsWith('CANCEL_DELETE') ? 'bg-info-soft text-info'
   : a === 'LOGIN' ? 'bg-ok-soft text-ok'
   : 'bg-muted text-muted-foreground';
 export default function AuditLogs({ logs, actions, filters }: { logs: Paginated<Log>; actions: string[]; filters: Record<string, string> }) {

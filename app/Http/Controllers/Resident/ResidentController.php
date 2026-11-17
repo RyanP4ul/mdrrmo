@@ -2,14 +2,17 @@
 
 namespace App\Http\Controllers\Resident;
 
+use App\Events\EmergencyReportUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
 use App\Models\ResidentNotification;
 use App\Models\ServiceSchedule;
+use App\Services\EmergencyReportWorkflow;
 use App\Services\ServiceScheduleWorkflow;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
@@ -43,14 +46,49 @@ class ResidentController extends Controller
         ]);
         $u = $request->user();
 
-        EmergencyReport::create($d + [
+        $report = EmergencyReport::create($d + [
             'reference' => EmergencyReport::generateReference(),
+            'status' => 'pending',
             'priority' => IncidentType::find($d['incident_type_id'])->priority, 'source' => 'mobile-app',
             'reported_by' => $u->getKey(), 'reported_by_type' => $u->getMorphClass(),
             'reporter_name' => $u->full_name, 'reporter_contact' => $u->contact_number,
         ]);
 
+        EmergencyReportUpdated::dispatch($report, null, true);
+
         return redirect()->route('resident.history')->with('success', 'Report sent. Help is being arranged.');
+    }
+
+    public function withdrawReport(Request $request, EmergencyReport $report, EmergencyReportWorkflow $workflow)
+    {
+        $user = $request->user();
+        abort_unless(
+            $report->reported_by === $user->getKey() && $report->reported_by_type === $user->getMorphClass(),
+            403,
+        );
+
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:1000'],
+        ]);
+
+        DB::transaction(function () use ($report, $user, $workflow, $data): void {
+            $record = EmergencyReport::query()->lockForUpdate()->findOrFail($report->getKey());
+            if ($record->withdrawn_at) {
+                return;
+            }
+            if ($record->status !== 'pending') {
+                throw ValidationException::withMessages([
+                    'reason' => 'Only pending reports can be withdrawn.',
+                ]);
+            }
+            $record->update([
+                'withdrawn_at' => now(),
+                'withdrawal_reason' => $data['reason'],
+            ]);
+            $workflow->transition($record, 'invalid', $user);
+        });
+
+        return back()->with('success', 'Report withdrawn.');
     }
 
     public function history(Request $request)

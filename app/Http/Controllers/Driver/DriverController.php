@@ -76,8 +76,20 @@ class DriverController extends Controller
     public function updateStatus(Request $request, EmergencyReport $report, EmergencyReportWorkflow $workflow)
     {
         $request->merge(['response_status' => $request->input('response_status', $request->input('vehicle_status'))]);
-        $data = $request->validate(['response_status' => ['required', 'in:en-route,on-scene,returning,available']]);
-        app(DriverResponseProgress::class)->advance($request->user(), $report, $data['response_status']);
+        $data = $request->validate([
+            'response_status' => ['required', 'in:en-route,on-scene,transporting,arrived,returning,available'],
+            'hospital_id' => ['nullable', 'integer', 'exists:hospitals,id'],
+            'destination' => ['nullable', 'string', 'max:255'],
+        ]);
+        app(DriverResponseProgress::class)->advance(
+            $request->user(),
+            $report,
+            $data['response_status'],
+            [
+                'hospital_id' => $data['hospital_id'] ?? null,
+                'destination' => $data['destination'] ?? null,
+            ],
+        );
 
         return back()->with('success', 'Response progress updated.');
     }

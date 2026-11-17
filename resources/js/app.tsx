@@ -1,5 +1,6 @@
 import { configureEcho } from "@laravel/echo-react";
 import { createInertiaApp, type ResolvedComponent } from "@inertiajs/react";
+import { ThemeProvider } from "next-themes";
 import { createRoot } from "react-dom/client";
 
 if (import.meta.env.VITE_REVERB_APP_KEY) {
@@ -41,6 +42,10 @@ createInertiaApp({
             throw new Error("Inertia did not provide a mount element.");
         }
 
-        createRoot(el).render(<App {...props} />);
+        createRoot(el).render(
+            <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+                <App {...props} />
+            </ThemeProvider>
+        );
     },
 });

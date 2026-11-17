@@ -34,21 +34,21 @@ class MaintenanceReport extends Model
 
     public function vehicle(): BelongsTo
     {
-        return $this->belongsTo(Vehicle::class);
+        return $this->belongsTo(Vehicle::class)->withTrashed();
     }
 
     public function team(): BelongsTo
     {
-        return $this->belongsTo(ResponseTeam::class, 'response_team_id');
+        return $this->belongsTo(ResponseTeam::class, 'response_team_id')->withTrashed();
     }
 
     public function reporter(): BelongsTo
     {
-        return $this->belongsTo(DriverResponderUser::class, 'reported_by');
+        return $this->belongsTo(DriverResponderUser::class, 'reported_by')->withTrashed();
     }
 
     public function reviewer(): BelongsTo
     {
-        return $this->belongsTo(AdminUser::class, 'reviewed_by');
+        return $this->belongsTo(AdminUser::class, 'reviewed_by')->withTrashed();
     }
 }

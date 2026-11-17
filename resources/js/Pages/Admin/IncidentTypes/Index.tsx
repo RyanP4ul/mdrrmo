@@ -20,18 +20,24 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useServerFilters } from '@/hooks/useServerFilters';
 import type { Paginated, Priority } from '@/types';
 
-interface IncidentType { id: number; name: string; description: string; priority: Priority; color: string; reports_count: number }
+interface IncidentType { id: number; name: string; description: string; priority: Priority }
 const PRIORITIES: Priority[] = ['low', 'medium', 'high', 'critical'];
+const PRIORITY_COLORS: Record<Priority, string> = {
+  low: '#6b7280',
+  medium: '#d97706',
+  high: '#ea580c',
+  critical: '#b42318',
+};
 
 export default function Index({ types, filters }: { types: Paginated<IncidentType>; filters: { search?: string; priority?: string } }) {
   const { values, set } = useServerFilters({ search: filters.search ?? '', priority: filters.priority ?? 'all' }, ['types']);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<IncidentType | null>(null);
   const [deleting, setDeleting] = useState<IncidentType | null>(null);
-  const form = useForm({ name: '', description: '', priority: 'medium' as Priority, color: '#6b7280' });
+  const form = useForm({ name: '', description: '', priority: 'medium' as Priority });
 
   const openAdd = () => { setEditing(null); form.reset(); form.clearErrors(); setOpen(true); };
-  const openEdit = (t: IncidentType) => { setEditing(t); form.setData({ name: t.name, description: t.description, priority: t.priority, color: t.color }); form.clearErrors(); setOpen(true); };
+  const openEdit = (t: IncidentType) => { setEditing(t); form.setData({ name: t.name, description: t.description, priority: t.priority }); form.clearErrors(); setOpen(true); };
   const submit = () => {
     const opts = { preserveScroll: true, onSuccess: () => setOpen(false) };
     editing ? form.put(route('admin.incident-types.update', editing.id), opts) : form.post(route('admin.incident-types.store'), opts);
@@ -53,7 +59,7 @@ export default function Index({ types, filters }: { types: Paginated<IncidentTyp
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-48">Name</TableHead><TableHead className="hidden md:table-cell">Description</TableHead>
-                  <TableHead className="w-28">Priority</TableHead><TableHead className="w-24 text-right">Reports</TableHead>
+                  <TableHead className="w-28">Priority</TableHead>
                   <TableHead className="w-28 text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -61,11 +67,10 @@ export default function Index({ types, filters }: { types: Paginated<IncidentTyp
                 {types.data.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell className="font-medium">
-                      <span className="mr-2 inline-block size-2.5 rounded-full align-middle" style={{ background: t.color }} />{t.name}
+                      <span className="mr-2 inline-block size-2.5 rounded-full align-middle" style={{ background: PRIORITY_COLORS[t.priority] }} />{t.name}
                     </TableCell>
                     <TableCell className="hidden max-w-md truncate text-muted-foreground md:table-cell">{t.description}</TableCell>
                     <TableCell><StatusBadge value={t.priority} /></TableCell>
-                    <TableCell className="text-right tabular-nums">{t.reports_count}</TableCell>
                     <TableCell className="text-center">
                       <Button variant="ghost" size="icon" aria-label={`Edit ${t.name}`} onClick={() => openEdit(t)}><Pencil className="size-4" /></Button>
                       <Button variant="ghost" size="icon" aria-label={`Delete ${t.name}`} className="text-destructive" onClick={() => setDeleting(t)}><Trash2 className="size-4" /></Button>
@@ -83,7 +88,7 @@ export default function Index({ types, filters }: { types: Paginated<IncidentTyp
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit incident type' : 'Add incident type'}</DialogTitle>
-            <DialogDescription>Color is used on charts and the incident map.</DialogDescription>
+            <DialogDescription>Priority determines the color used on charts and the incident map.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <Field label="Name" htmlFor="name" required error={form.errors.name}>
@@ -92,17 +97,12 @@ export default function Index({ types, filters }: { types: Paginated<IncidentTyp
             <Field label="Description" htmlFor="desc" required error={form.errors.description}>
               <Textarea id="desc" rows={3} value={form.data.description} onChange={(e) => form.setData('description', e.target.value)} />
             </Field>
-            <div className="grid grid-cols-[1fr_auto] gap-3">
-              <Field label="Priority" htmlFor="priority">
-                <Select value={form.data.priority} onValueChange={(v) => form.setData('priority', v as Priority)}>
-                  <SelectTrigger id="priority" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>{PRIORITIES.map((p) => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}</SelectContent>
-                </Select>
-              </Field>
-              <Field label="Color" htmlFor="color">
-                <Input id="color" type="color" className="h-9 w-16 p-1 max-lg:h-11" value={form.data.color} onChange={(e) => form.setData('color', e.target.value)} />
-              </Field>
-            </div>
+            <Field label="Priority" htmlFor="priority">
+              <Select value={form.data.priority} onValueChange={(v) => form.setData('priority', v as Priority)}>
+                <SelectTrigger id="priority" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>{PRIORITIES.map((p) => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}</SelectContent>
+              </Select>
+            </Field>
           </div>          <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button onClick={submit} disabled={form.processing}>{editing ? 'Save changes' : 'Create'}</Button>
@@ -111,7 +111,8 @@ export default function Index({ types, filters }: { types: Paginated<IncidentTyp
       </Dialog>
 
       <ConfirmDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}
-        title="Delete incident type" description={`“${deleting?.name}” will be removed. Types used by reports can’t be deleted.`}
+        title="Move incident type to Archives" description={`“${deleting?.name}” will be moved to Archives. Existing historical reports remain intact, and you can restore it or schedule 30-day permanent deletion inside Archives.`}
+        confirmLabel="Archive"
         onConfirm={() => { router.delete(route('admin.incident-types.destroy', deleting!.id), { preserveScroll: true }); setDeleting(null); }} />
     </AppLayout>
   );

@@ -177,7 +177,7 @@ class DispatchService
     }
 
     /** Nearest hospitals (haversine), ETA assumes 40 km/h average. Prefers matching specialization. */
-    public function recommendHospitals(EmergencyReport $report, int $limit = 3)
+    public function recommendHospitals(EmergencyReport $report, int $limit = 3, array $excludeHospitalIds = [])
     {
         $want = ['Medical Emergency' => 'Emergency', 'Trauma' => 'Trauma', 'Vehicular' => 'Trauma', 'Fire' => 'Burn'][$report->incidentType->name] ?? null;
         $columns = ['id', 'name', 'address', 'lat', 'lng', 'available_beds', 'contact_number', 'specialization'];
@@ -193,6 +193,7 @@ class DispatchService
                 'distance' => round($km, 1),
                 'rawDistance' => $km,
                 'availableBeds' => $hospital->available_beds,
+                'available' => $hospital->available_beds === null || $hospital->available_beds > 0,
                 'contactNumber' => $hospital->contact_number,
                 'specialization' => $hospital->specialization ?? [],
                 'eta' => max(1, (int) round($km / 40 * 60)),
@@ -202,7 +203,11 @@ class DispatchService
 
         $specialized = $want === null
             ? collect()
-            : Hospital::query()->whereJsonContains('specialization', $want)->get($columns)->map($toRecommendation);
+            : Hospital::query()
+                ->when($excludeHospitalIds !== [], fn ($q) => $q->whereNotIn('id', $excludeHospitalIds))
+                ->whereJsonContains('specialization', $want)
+                ->get($columns)
+                ->map($toRecommendation);
 
         $rankedSpecialized = $specialized->sortBy('rawDistance')->take($limit)->values();
         $remaining = max(0, $limit - $rankedSpecialized->count());
@@ -215,7 +220,7 @@ class DispatchService
             });
         }
 
-        $excludedIds = $specialized->pluck('id')->all();
+        $excludedIds = array_values(array_unique(array_merge($excludeHospitalIds, $specialized->pluck('id')->all())));
         $radiusKm = 25.0;
         $rankedOtherHospitals = collect();
 

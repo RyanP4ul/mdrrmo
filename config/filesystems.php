@@ -60,6 +60,26 @@ return [
             'report' => false,
         ],
 
+        'r2' => [
+            'driver' => 's3',
+            'key' => env('R2_ACCESS_KEY_ID'),
+            'secret' => env('R2_SECRET_ACCESS_KEY'),
+            'region' => env('R2_REGION', 'auto'),
+            'bucket' => env('R2_BUCKET_NAME'),
+            'url' => env('R2_PUBLIC_URL'),
+            'endpoint' => env('R2_ACCOUNT_ID')
+                ? 'https://'.env('R2_ACCOUNT_ID').'.r2.cloudflarestorage.com'
+                : null,
+            'use_path_style_endpoint' => true,
+            'http' => [
+                'verify' => class_exists(\Composer\CaBundle\CaBundle::class)
+                    ? \Composer\CaBundle\CaBundle::getSystemCaRootBundlePath()
+                    : true,
+            ],
+            'throw' => true,
+            'report' => false,
+        ],
+
     ],
 
     /*

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\Archivable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -10,6 +11,8 @@ use Illuminate\Support\Str;
 
 class EmergencyReport extends Model
 {
+    use Archivable;
+
     protected $guarded = ['id'];
 
     public static function generateReference(): string
@@ -33,27 +36,27 @@ class EmergencyReport extends Model
 
     public function incidentType(): BelongsTo
     {
-        return $this->belongsTo(IncidentType::class);
+        return $this->belongsTo(IncidentType::class)->withTrashed();
     }
 
     public function team(): BelongsTo
     {
-        return $this->belongsTo(ResponseTeam::class, 'response_team_id');
+        return $this->belongsTo(ResponseTeam::class, 'response_team_id')->withTrashed();
     }
 
     public function reporter(): MorphTo
     {
-        return $this->morphTo('reporter', 'reported_by_type', 'reported_by');
+        return $this->morphTo('reporter', 'reported_by_type', 'reported_by')->withTrashed();
     }
 
     public function driver(): BelongsTo
     {
-        return $this->belongsTo(DriverResponderUser::class, 'assigned_driver_id');
+        return $this->belongsTo(DriverResponderUser::class, 'assigned_driver_id')->withTrashed();
     }
 
     public function acknowledgedBy(): MorphTo
     {
-        return $this->morphTo('acknowledgedBy', 'acknowledged_by_type', 'acknowledged_by');
+        return $this->morphTo('acknowledgedBy', 'acknowledged_by_type', 'acknowledged_by')->withTrashed();
     }
 
     public function trip(): HasOne

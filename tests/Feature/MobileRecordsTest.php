@@ -501,4 +501,32 @@ class MobileRecordsTest extends TestCase
         $this->putJson($url, ['current_password' => 'password', 'cancel' => true])->assertOk()->assertJsonPath('deletion_request.status', 'cancelled');
         $this->assertSame('cancelled', DB::table('account_deletion_requests')->value('status'));
     }
+
+    public function test_starting_trip_notifies_resident_once_even_if_retried(): void
+    {
+        $resident = ResidentUser::factory()->accepted()->create();
+        $driver = DriverResponderUser::factory()->create();
+        $vehicle = $this->vehicle($driver);
+        $report = $this->report($resident, [
+            'assigned_driver_id' => $driver->id,
+            'response_team_id' => $vehicle->response_team_id,
+            'status' => 'dispatched',
+        ]);
+        Sanctum::actingAs($driver, ['*']);
+
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['response_status' => 'en-route'])
+            ->assertOk()
+            ->assertJsonPath('assignment.response_status', 'en-route');
+
+        $this->assertDatabaseCount('resident_notifications', 1);
+        $notification = ResidentNotification::first();
+        $this->assertSame($resident->id, $notification->user_id);
+        $this->assertSame('Response vehicle on the way', $notification->title);
+        $this->assertStringContainsString('on its way', $notification->message);
+
+        // Retrying or double-tapping en-route must not create a duplicate notification.
+        $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['response_status' => 'en-route'])
+            ->assertUnprocessable();
+        $this->assertDatabaseCount('resident_notifications', 1);
+    }
 }

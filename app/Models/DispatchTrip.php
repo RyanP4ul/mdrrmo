@@ -10,6 +10,16 @@ class DispatchTrip extends Model
 
     protected function casts(): array
     {
-        return ['returning_at' => 'datetime', 'started_at' => 'datetime', 'on_scene_at' => 'datetime', 'picked_up_at' => 'datetime', 'arrived_at' => 'datetime', 'distance_km' => 'float'];
+        return [
+            'driver_acknowledged_at' => 'datetime',
+            'returning_at' => 'datetime',
+            'started_at' => 'datetime',
+            'on_scene_at' => 'datetime',
+            'picked_up_at' => 'datetime',
+            'arrived_at' => 'datetime',
+            'distance_km' => 'float',
+            'hospital_id' => 'integer',
+            'unavailable_hospital_ids' => 'array',
+        ];
     }
 }

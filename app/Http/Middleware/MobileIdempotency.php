@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
@@ -19,7 +20,12 @@ class MobileIdempotency
             ? 'guest-report'
             : ($user ? $user->getMorphClass().':'.$user->getKey() : 'registration:'.strtolower((string) $request->input('email')));
         $scope = hash('sha256', $identity);
-        $payload = $request->all();
+        $payload = array_map(
+            fn ($value) => $value instanceof UploadedFile
+                ? ['filename' => $value->getClientOriginalName(), 'size' => $value->getSize()]
+                : $value,
+            $request->all(),
+        );
         ksort($payload);
         $fingerprint = hash_hmac('sha256', $request->method().' '.$request->path().' '.json_encode($payload, JSON_THROW_ON_ERROR), config('app.key'));
 

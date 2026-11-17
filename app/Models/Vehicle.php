@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\Archivable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -9,6 +10,8 @@ use Illuminate\Support\Facades\Storage;
 
 class Vehicle extends Model
 {
+    use Archivable;
+
     public const TYPES = ['ambulance', 'fire-truck', 'rescue-van', 'police-car', 'utility-truck'];
 
     public const STATUSES = ['en-route', 'on-scene', 'available', 'returning', 'offline', 'maintenance'];
@@ -23,12 +26,12 @@ class Vehicle extends Model
 
     public function team(): BelongsTo
     {
-        return $this->belongsTo(ResponseTeam::class, 'response_team_id');
+        return $this->belongsTo(ResponseTeam::class, 'response_team_id')->withTrashed();
     }
 
     public function report(): BelongsTo
     {
-        return $this->belongsTo(EmergencyReport::class, 'assigned_report_id');
+        return $this->belongsTo(EmergencyReport::class, 'assigned_report_id')->withTrashed();
     }
 
     public function maintenanceReports(): HasMany

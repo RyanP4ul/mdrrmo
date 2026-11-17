@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import AppLayout from "@/Layouts/AppLayout";
+import { DispatchScheduleRealtime } from "@/components/DispatchReportRealtime";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -137,6 +138,7 @@ export default function Schedule({
     return (
         <AppLayout>
             <Head title="Schedule" />
+            <DispatchScheduleRealtime reloadProps={['schedules', 'teams']} />
             <PageHeader
                 icon={CalendarDays}
                 title="Service schedule"

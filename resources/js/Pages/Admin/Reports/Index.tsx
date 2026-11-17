@@ -1,8 +1,9 @@
-import { Head, Link } from '@inertiajs/react';
+import { Head, Link, router } from '@inertiajs/react';
 import { route } from 'ziggy-js';
-import { ChevronDown, ChevronUp, Eye, FileDown, FileText, Truck } from 'lucide-react';
+import { Archive, ChevronDown, ChevronUp, Eye, FileDown, FileText, Truck } from 'lucide-react';
 import { useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { OperationsPdfReportPanel, type OperationsDefaults } from '@/components/OperationsPdfReportPanel';
 import { FilterBar, FilterSelect } from '@/components/FilterBar';
@@ -44,6 +45,7 @@ export default function Index({
   const tab = filters.tab === 'driver' ? 'driver' : 'emergency';
   const clearFilters = () => { reset(); set('tab', tab); };
   const [showOperationsPdf, setShowOperationsPdf] = useState<boolean>(true);
+  const [archiving, setArchiving] = useState<ReportRow | null>(null);
   const pick = (k: string) => (v: string) => set(k as 'status', v === 'all' ? '' : v);
   const isFiltered = Object.entries(values).some(([key, value]) => key !== 'tab' && Boolean(value));
   const driverFormRows = reports.data;
@@ -141,11 +143,24 @@ export default function Index({
                     <TableCell className="hidden whitespace-nowrap text-muted-foreground tabular-nums sm:table-cell">{formatDateTime(r.reported_at)}</TableCell>
                     <TableCell><StatusBadge value={r.status} /></TableCell>
                     <TableCell className="text-right">
-                      <Button asChild variant="outline" size="sm">
-                        <Link href={route('admin.reports.show', r.id)} aria-label={`View report ${r.reference}`}>
-                          <Eye className="size-3.5" />View
-                        </Link>
-                      </Button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <Button asChild variant="outline" size="sm">
+                          <Link href={route('admin.reports.show', r.id)} aria-label={`View report ${r.reference}`}>
+                            <Eye className="size-3.5" />View
+                          </Link>
+                        </Button>
+                        {(r.status === 'resolved' || r.status === 'invalid') && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Archive report ${r.reference}`}
+                            onClick={() => setArchiving(r)}
+                          >
+                            <Archive className="size-3.5" />Archive
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -203,6 +218,19 @@ export default function Index({
         </div>
       )}
       <ServerPagination page={reports} noun={tab === 'driver' ? 'driver form' : 'report'} />
+      <ConfirmDialog
+        open={!!archiving}
+        onOpenChange={(o) => !o && setArchiving(null)}
+        title="Move report to Archives"
+        description={`Report ${archiving?.reference} will be moved to Archives. You can restore it or schedule 30-day permanent deletion from Archives.`}
+        confirmLabel="Archive"
+        onConfirm={() => {
+          if (archiving) {
+            router.patch(route('admin.reports.archive', archiving.id), {}, { preserveScroll: true });
+            setArchiving(null);
+          }
+        }}
+      />
     </AppLayout>
   );
 }

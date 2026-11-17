@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\MaintenanceReport;
 use App\Models\ResponseTeam;
 use App\Models\Vehicle;
+use App\Services\ArchiveService;
 use App\Services\VehicleMaintenanceService;
 use App\Support\Audit;
 use Illuminate\Http\Request;
@@ -193,21 +194,11 @@ class VehicleController extends Controller
         return back()->with('success', 'Vehicle status updated.');
     }
 
-    public function destroy(Vehicle $vehicle)
+    public function destroy(Request $request, Vehicle $vehicle, ArchiveService $archives)
     {
-        DB::transaction(function () use ($vehicle): void {
-            $locked = Vehicle::query()->lockForUpdate()->findOrFail($vehicle->id);
-            if ($locked->assigned_report_id !== null) {
-                throw ValidationException::withMessages([
-                    'vehicle' => 'Cannot delete a vehicle assigned to an active incident.',
-                ]);
-            }
-            $plate = $locked->plate_number;
-            $locked->delete();
-            Audit::record('DELETE_VEHICLE', "Deleted vehicle {$plate}");
-        });
+        $archives->archive($vehicle, $request->user());
 
-        return back()->with('success', 'Vehicle removed.');
+        return back()->with('success', 'Vehicle moved to Archives.');
     }
 
     public function reviewMaintenanceReport(Request $request, MaintenanceReport $maintenanceReport, VehicleMaintenanceService $service)

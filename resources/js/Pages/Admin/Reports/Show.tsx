@@ -1,9 +1,12 @@
 import { Head, Link, router } from '@inertiajs/react';
 import { route } from 'ziggy-js';
-import { ArrowLeft } from 'lucide-react';
+import { Archive, ArrowLeft } from 'lucide-react';
+import { useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { StatusBadge } from '@/components/StatusBadge';
 import { LocationMap } from '@/components/maps/LocationMap';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { formatDateTime } from '@/lib/utils';
@@ -12,8 +15,10 @@ import type { EmergencyReport } from '@/types/website';
 const Row = ({ k, v }: { k: string; v?: string | null }) => v ? <div className="flex justify-between gap-4 py-2 text-sm"><dt className="text-muted-foreground">{k}</dt><dd className="text-right font-medium">{v}</dd></div> : null;
 
 export default function Show({ report: r }: { report: EmergencyReport }) {
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const upd = (patch: Record<string, string>) => router.patch(route('admin.reports.update', r.id), { status: r.status, priority: r.priority, ...patch }, { preserveScroll: true });
   const f = r.form;
+  const canArchive = r.status === 'resolved' || r.status === 'invalid';
   return (
     <AppLayout>
       <Head title={r.reference} />
@@ -34,6 +39,12 @@ export default function Show({ report: r }: { report: EmergencyReport }) {
             <SelectTrigger className="w-36" aria-label="Status"><SelectValue /></SelectTrigger>
             <SelectContent>{['pending', 'acknowledged', 'dispatched', 'resolved', 'invalid'].map((p) => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}</SelectContent>
           </Select>
+          {canArchive && (
+            <Button type="button" variant="outline" onClick={() => setConfirmArchive(true)}>
+              <Archive className="mr-1.5 size-4" />
+              Archive
+            </Button>
+          )}
         </div>
       </header>
 
@@ -108,6 +119,17 @@ export default function Show({ report: r }: { report: EmergencyReport }) {
           </Card>
         )}
       </div>
+      <ConfirmDialog
+        open={confirmArchive}
+        onOpenChange={setConfirmArchive}
+        title="Move report to Archives"
+        description={`Report ${r.reference} will be moved to Archives. You can restore it or schedule 30-day permanent deletion from Archives.`}
+        confirmLabel="Archive"
+        onConfirm={() => {
+          router.patch(route('admin.reports.archive', r.id));
+          setConfirmArchive(false);
+        }}
+      />
     </AppLayout>
   );
 }

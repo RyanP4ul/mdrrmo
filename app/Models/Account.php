@@ -38,6 +38,33 @@ final class Account
 
     public static function findByKey(string $key): ?User
     {
+        $parsed = self::parseKey($key);
+        if ($parsed === null) {
+            return null;
+        }
+
+        [$model, $id] = $parsed;
+
+        return $model::query()->find($id);
+    }
+
+    public static function findByKeyWithTrashed(string $key): ?User
+    {
+        $parsed = self::parseKey($key);
+        if ($parsed === null) {
+            return null;
+        }
+
+        [$model, $id] = $parsed;
+
+        return $model::withTrashed()->find($id);
+    }
+
+    /**
+     * @return array{0: class-string<User>, 1: int}|null
+     */
+    private static function parseKey(string $key): ?array
+    {
         $separator = strrpos($key, '-');
 
         if ($separator === false || !ctype_digit(substr($key, $separator + 1))) {
@@ -56,7 +83,7 @@ final class Account
             return null;
         }
 
-        return $model::query()->find((int) substr($key, $separator + 1));
+        return [$model, (int) substr($key, $separator + 1)];
     }
 
     public static function findById(int $id): ?User

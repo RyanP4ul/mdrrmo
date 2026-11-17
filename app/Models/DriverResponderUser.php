@@ -6,7 +6,14 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class DriverResponderUser extends User
 {
+    public const SHIFT_TEAMS = ['day', 'night'];
+
     protected $table = 'drivers';
+
+    public function scopeForShiftTeam($query, string $shiftTeam)
+    {
+        return $query->where('shift_team', $shiftTeam);
+    }
 
     public function activeAssignments(): HasMany
     {

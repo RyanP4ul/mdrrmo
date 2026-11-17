@@ -102,6 +102,7 @@ Route::middleware(['auth:sanctum', 'mobile.session', 'role:driver/responder'])
         Route::get('/bootstrap', [MobileDriverApiController::class, 'bootstrap'])->middleware(['abilities:driver-read'])->name('bootstrap');
         Route::get('/assignments', [MobileDriverApiController::class, 'assignments'])->middleware(['abilities:driver-read'])->name('assignments');
         Route::get('/assignments/{report}/hospitals', [MobileDriverApiController::class, 'hospitals'])->middleware('abilities:driver-read')->name('assignments.hospitals');
+        Route::post('/assignments/{report}/hospitals/{hospital}/unavailable', [MobileDriverApiController::class, 'markHospitalUnavailable'])->middleware('abilities:driver-write')->name('assignments.hospitals.unavailable');
         Route::get('/history', [MobileDriverApiController::class, 'history'])->middleware(['abilities:driver-read'])->name('history');
         Route::patch('/assignments/{report}/status', [MobileDriverApiController::class, 'updateStatus'])->middleware(['abilities:driver-write'])->name('assignments.status');
         Route::patch('/availability', [MobileDriverApiController::class, 'updateAvailability'])->middleware(['abilities:driver-write'])->name('availability');

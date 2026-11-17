@@ -15,6 +15,7 @@ class MapController extends Controller
 
         return Inertia::render('Dispatcher/Map', [
             'snapshotAt' => $snapshotAt,
+            'googleMapsApiKey' => config('services.google_maps.key'),
             'drivers' => fn () => DriverLocation::with('driver.activeAssignments.trip', 'driver.activeAssignments.team', 'driver.activeMemberships.team')
                 ->whereHas('driver', fn ($query) => $query->where('status', 'active'))->orderBy('driver_id')->get()
                 ->map(fn (DriverLocation $location): array => $location->mapData($snapshotAt)),

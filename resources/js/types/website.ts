@@ -57,10 +57,13 @@ export interface EmergencyReport {
     lat: number;
     lng: number;
     description: string;
+    photo_url?: string | null;
     source?: 'mobile-app' | 'emergency-call';
     reported_at: string;
     acknowledged_at?: string | null;
     resolved_at?: string | null;
+    withdrawn_at?: string | null;
+    withdrawal_reason?: string | null;
     reporter_name?: string;
     reporter_contact?: string | null;
     incident_type: IncidentTypeSummary;

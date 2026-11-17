@@ -3,6 +3,7 @@ import { route } from 'ziggy-js';
 import { Lock, Phone, PhoneCall, Radio, Smartphone, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
+import { DispatchReportRealtime } from '@/components/DispatchReportRealtime';
 import { PageHeader } from '@/components/PageHeader';
 import { StatCard, StatGroup } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -22,7 +23,7 @@ import { cn, formatDateTime } from '@/lib/utils';
 
 interface VictimInfo { name?: string | null; age?: string | number | null; sex?: string | null }
 interface WitnessInfo { statement?: string | null }
-interface Report { id: number; reference: string; status: string; priority: string; location: string; lat: number; lng: number; description: string; source: string; reporter_name: string; reporter_contact: string | null; incident_type_id: number; reporter_type: 'victim' | 'witness' | null; victim_info?: VictimInfo | null; witness_info?: WitnessInfo | null; reported_at: string; incident_type: { name: string; color: string }; team: { team_name: string } | null }
+interface Report { id: number; reference: string; status: string; priority: string; location: string; lat: number; lng: number; description: string; photo_url?: string | null; source: string; reporter_name: string; reporter_contact: string | null; incident_type_id: number; reporter_type: 'victim' | 'witness' | null; victim_info?: VictimInfo | null; witness_info?: WitnessInfo | null; reported_at: string; incident_type: { name: string; color: string }; team: { team_name: string } | null }
 interface Props { incoming: Report[]; counts: Record<string, number>; types: { id: number; name: string; priority: string }[]; autoTeam: { id: number; name: string; members: { id: number; name: string; role: string }[] } | null }
 
 function DispatchForm({ selected, types, autoTeam, onDone }: { selected: Report | null; types: Props['types']; autoTeam: Props['autoTeam']; onDone: () => void }) {
@@ -131,6 +132,13 @@ function DispatchForm({ selected, types, autoTeam, onDone }: { selected: Report 
           <Field label="What happened?" htmlFor="incident-description" error={e.description}>
             <Textarea id="incident-description" rows={3} placeholder={readOnly ? undefined : 'Describe the emergency, people affected, and any useful landmarks.'} readOnly={readOnly} className={readOnlyClass} value={displayValue(form.data.description)} onChange={readOnly ? undefined : (ev) => form.setData('description', ev.target.value)} />
           </Field>
+          {readOnly && selected.photo_url && (
+            <Field label="Incident photo" hint="Submitted by the resident. Click to open full size.">
+              <a href={selected.photo_url} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-md border bg-muted/30">
+                <img src={selected.photo_url} alt={`Incident photo for ${selected.reference}`} className="max-h-64 w-full object-contain" />
+              </a>
+            </Field>
+          )}
         </fieldset>
 
         <fieldset className="space-y-3 border-t pt-5">
@@ -173,6 +181,7 @@ export default function Dashboard({ incoming, counts, types, autoTeam }: Props) 
   return (
     <AppLayout>
       <Head title="Dispatch Operations" />
+      <DispatchReportRealtime reloadProps={['incoming', 'counts', 'autoTeam']} />
       <PageHeader title="Dispatch operations" description="Review incoming incidents and coordinate your next response." />
 
       <StatGroup>

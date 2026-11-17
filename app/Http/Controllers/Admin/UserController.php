@@ -10,10 +10,12 @@ use App\Models\DriverResponderUser;
 use App\Models\ResidentNotification;
 use App\Models\ResidentUser;
 use App\Models\User;
+use App\Services\ArchiveService;
 use App\Support\Audit;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -59,10 +61,17 @@ class UserController extends Controller
         return Inertia::render('Admin/Users/Index', [
             'filters' => $filters,
             'employees' => $employeeRows,
-            'residents' => $residents->through(fn (ResidentUser $resident): array => [
-                ...$resident->toArray(),
-                'account_key' => Account::keyFor($resident),
-            ]),
+            'residents' => $residents->through(function (ResidentUser $resident): array {
+                $accountKey = Account::keyFor($resident);
+
+                return [
+                    ...$resident->toArray(),
+                    'account_key' => $accountKey,
+                    'id_document_url' => $resident->id_document_path
+                        ? route('admin.residents.id-document', $accountKey)
+                        : null,
+                ];
+            }),
         ]);
     }
 
@@ -99,21 +108,33 @@ class UserController extends Controller
         return back()->with('success', 'User updated.');
     }
 
-    public function destroy(Request $request, string $account)
+    public function destroy(Request $request, string $account, ArchiveService $archives)
     {
         $user = Account::findByKey($account);
         abort_unless($user, 404);
         abort_if(
             Account::keyFor($user) === Account::keyFor($request->user()),
             422,
-            'You cannot delete your own account.',
+            'You cannot archive your own account.',
         );
 
-        $name = $user->full_name;
-        $user->delete();
-        Audit::record('DELETE_USER', "Deleted {$name}");
+        $archives->archive($user, $request->user());
 
-        return back()->with('success', 'User deleted.');
+        return back()->with('success', 'User moved to Archives.');
+    }
+
+    public function idDocument(string $account)
+    {
+        $user = Account::findByKey($account);
+        abort_unless(
+            $user instanceof ResidentUser && $user->id_document_path && Storage::disk('r2')->exists($user->id_document_path),
+            404,
+        );
+
+        return Storage::disk('r2')->response($user->id_document_path, null, [
+            'Cache-Control' => 'private, max-age=300',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 
     public function review(Request $request, string $account)
@@ -147,9 +168,9 @@ class UserController extends Controller
             'date_of_birth', 'sex', 'status', 'barangay', 'city', 'province',
             'id_type', 'id_document_path', 'registration_status',
         ];
-        $accounts = AdminUser::query()->select($columns)->selectRaw('? as role, NULL as phone_number', ['admin'])
-            ->unionAll(DispatcherUser::query()->select($columns)->selectRaw('? as role, phone_number', ['dispatcher']))
-            ->unionAll(DriverResponderUser::query()->select($columns)->selectRaw('? as role, NULL as phone_number', ['driver/responder']));
+        $accounts = AdminUser::query()->select($columns)->selectRaw('? as role, NULL as phone_number, NULL as shift_team', ['admin'])
+            ->unionAll(DispatcherUser::query()->select($columns)->selectRaw('? as role, phone_number, shift_team', ['dispatcher']))
+            ->unionAll(DriverResponderUser::query()->select($columns)->selectRaw('? as role, NULL as phone_number, shift_team', ['driver/responder']));
 
         return DB::query()->fromSub($accounts, 'employee_accounts');
     }
@@ -187,6 +208,7 @@ class UserController extends Controller
             'sex' => ['nullable', 'in:Male,Female'],
             'role' => ['required', 'in:admin,dispatcher,driver/responder,resident'],
             'status' => ['required', 'in:active,inactive,suspended'],
+            'shift_team' => ['exclude_unless:role,dispatcher,driver/responder', 'nullable', 'in:day,night'],
             'barangay' => ['nullable', 'string'],
             'city' => ['nullable', 'string'],
             'province' => ['nullable', 'string'],

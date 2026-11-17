@@ -7,6 +7,7 @@ use App\Http\Requests\GenerateEmergencyOperationsReportRequest;
 use App\Http\Requests\UpdateEmergencyReportRequest;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
+use App\Services\ArchiveService;
 use App\Services\EmergencyOperationsReportService;
 use App\Services\EmergencyReportWorkflow;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -117,5 +118,14 @@ class EmergencyReportController extends Controller
         $workflow->transition($report, $data['status'], $request->user(), $data['priority']);
 
         return back()->with('success', 'Report updated.');
+    }
+
+    public function archive(Request $request, EmergencyReport $report, ArchiveService $archives)
+    {
+        Gate::authorize('update', $report);
+
+        $archives->archive($report, $request->user());
+
+        return redirect()->route('admin.reports.index')->with('success', 'Report moved to Archives.');
     }
 }

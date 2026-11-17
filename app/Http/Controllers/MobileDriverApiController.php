@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\EmergencyReportUpdated;
 use App\Events\VehicleLocationUpdated;
 use App\Models\DispatchTrip;
 use App\Models\DriverNotification;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
+use App\Models\Hospital;
 use App\Models\IncidentType;
 use App\Models\MaintenanceReport;
 use App\Models\ResponseTeam;
@@ -148,10 +150,60 @@ class MobileDriverApiController extends Controller
     public function hospitals(Request $request, EmergencyReport $report, DispatchService $dispatch): JsonResponse
     {
         abort_unless($report->assigned_driver_id === $request->user()->getKey(), 404);
+        $trip = DispatchTrip::where('emergency_report_id', $report->id)->first();
+        $excluded = array_map('intval', $trip?->unavailable_hospital_ids ?? []);
 
         return response()->json([
             'report_id' => $report->getKey(),
-            'data' => $dispatch->recommendHospitals($report),
+            'data' => $dispatch->recommendHospitals($report, 3, $excluded),
+        ]);
+    }
+
+    public function markHospitalUnavailable(
+        Request $request,
+        EmergencyReport $report,
+        Hospital $hospital,
+        DispatchService $dispatch,
+    ): JsonResponse {
+        /** @var DriverResponderUser $driver */
+        $driver = $request->user();
+        abort_unless($report->assigned_driver_id === $driver->getKey(), 404);
+
+        $excluded = DB::transaction(function () use ($driver, $report, $hospital): array {
+            $locked = EmergencyReport::whereKey($report->id)->lockForUpdate()->firstOrFail();
+            Gate::forUser($driver)->authorize('advanceAsDriver', $locked);
+            $trip = DispatchTrip::firstOrCreate(
+                ['emergency_report_id' => $locked->id],
+                ['driver_name' => $driver->full_name],
+            );
+            $unavailable = array_values(array_unique(array_map(
+                'intval',
+                array_merge($trip->unavailable_hospital_ids ?? [], [$hospital->getKey()]),
+            )));
+            $updates = ['unavailable_hospital_ids' => $unavailable];
+            if ((int) $trip->hospital_id === (int) $hospital->getKey()) {
+                $updates['hospital_id'] = null;
+                $updates['destination'] = null;
+            }
+            $trip->update($updates);
+
+            return $unavailable;
+        });
+
+        $hospitals = $dispatch->recommendHospitals($report, 3, $excluded);
+        $nextHospital = $hospitals->firstWhere('available', true) ?? $hospitals->first();
+        if ($nextHospital !== null) {
+            DispatchTrip::where('emergency_report_id', $report->id)->update([
+                'hospital_id' => $nextHospital['id'],
+                'destination' => $nextHospital['name'],
+            ]);
+        }
+        EmergencyReportUpdated::dispatch($report->refresh());
+
+        return response()->json([
+            'report_id' => $report->getKey(),
+            'assignment' => $this->reportData($report->refresh()),
+            'data' => $hospitals,
         ]);
     }
 
@@ -172,8 +224,20 @@ class MobileDriverApiController extends Controller
         $driver = $request->user();
         abort_unless($report->assigned_driver_id === $driver->getKey(), 404);
         $request->merge(['response_status' => $request->input('response_status', $request->input('vehicle_status'))]);
-        $data = $request->validate(['response_status' => ['required', 'in:en-route,on-scene,available']]);
-        $updated = app(DriverResponseProgress::class)->advance($driver, $report, $data['response_status']);
+        $data = $request->validate([
+            'response_status' => ['required', 'in:en-route,on-scene,transporting,arrived,returning,available'],
+            'hospital_id' => ['nullable', 'integer', 'exists:hospitals,id'],
+            'destination' => ['nullable', 'string', 'max:255'],
+        ]);
+        $updated = app(DriverResponseProgress::class)->advance(
+            $driver,
+            $report,
+            $data['response_status'],
+            [
+                'hospital_id' => $data['hospital_id'] ?? null,
+                'destination' => $data['destination'] ?? null,
+            ],
+        );
 
         return response()->json(['assignment' => $updated->status === 'resolved' ? null : $this->reportData($updated)]);
     }
@@ -267,6 +331,7 @@ class MobileDriverApiController extends Controller
         ]);
         DriverNotification::receipt($driver->id, $report, 'submitted', 'Report received');
         $report->load('incidentType:id,name,color');
+        EmergencyReportUpdated::dispatch($report, null, true);
 
         return response()->json(['report' => $this->reportData($report)], 201);
     }
@@ -343,8 +408,15 @@ class MobileDriverApiController extends Controller
         $trip = DispatchTrip::where('emergency_report_id', $report->id)->first();
         // Match DriverResponseProgress for assignments created before trip events.
         // An active team vehicle may be working on a different report.
-        $responseStatus = $trip?->on_scene_at ? 'on-scene' : ($trip?->started_at ? 'en-route'
-            : (Vehicle::where('assigned_report_id', $report->id)->value('status') ?? 'available'));
+        $responseStatus = $trip?->arrived_at
+            ? 'arrived'
+            : ($trip?->picked_up_at
+                ? 'transporting'
+                : ($trip?->on_scene_at
+                    ? 'on-scene'
+                    : ($trip?->started_at
+                        ? 'en-route'
+                        : (Vehicle::where('assigned_report_id', $report->id)->value('status') ?? 'available'))));
         $patientName = trim((string) (($report->victim_info['name'] ?? null) ?: $report->reporter_name ?: ''));
         $responders = $report->team?->members
             ? $report->team->members
@@ -378,6 +450,8 @@ class MobileDriverApiController extends Controller
             'has_driver_form' => $hasDriverForm,
             'trip' => $trip,
             'response_status' => $responseStatus,
+            'hospital_id' => $trip?->hospital_id,
+            'unavailable_hospital_ids' => $trip?->unavailable_hospital_ids ?? [],
             'vehicle_id' => $teamVehicle?->id,
             'vehicle' => $teamVehicle?->plate_number ?? $trip?->vehicle_number ?? $vehicle?->plate_number,
             'vehicle_status' => $teamVehicle?->status ?? $vehicle?->status,

@@ -2,15 +2,25 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\Archivable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ResponseTeam extends Model
 {
+    use Archivable;
+
+    public const SHIFT_TEAMS = ['day', 'night'];
+
     protected $guarded = ['id'];
 
     protected $casts = ['specializations' => 'array', 'member_roles_enabled' => 'boolean'];
+
+    public function scopeForShiftTeam($query, string $shiftTeam)
+    {
+        return $query->where('shift_team', $shiftTeam);
+    }
 
     public function members(): HasMany
     {

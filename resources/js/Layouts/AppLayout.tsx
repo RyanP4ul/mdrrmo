@@ -1,8 +1,10 @@
 import { Link, router, usePage } from '@inertiajs/react';
-import { useEffect, useState, type ReactNode } from 'react';
-import { Toaster, toast } from 'sonner';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { toast } from 'sonner';
+import { Toaster } from '@/components/ui/sonner';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import {
-  Activity, AlertTriangle, Bell, CalendarDays, ChevronDown, ClipboardList, FileText, History, LayoutDashboard,
+  Activity, AlertTriangle, Archive, Bell, CalendarDays, ChevronDown, ClipboardList, FileText, History, LayoutDashboard,
   LogOut, Map as MapIcon, Menu, Navigation, Radio, Shield, Siren, Truck, Users, type LucideIcon,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
@@ -13,6 +15,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { PageProps, Role } from '@/types';
 import { VoiceCalls } from '@/components/VoiceCalls';
+import { DispatchReportRealtime, DispatchScheduleRealtime, type ReportUpdatedEvent, type ScheduleUpdatedEvent } from '@/components/DispatchReportRealtime';
 
 type Item = { label: string; href: string; icon: LucideIcon; exact?: boolean };
 type Group = { label?: string; items: Item[] };
@@ -24,6 +27,7 @@ const NAV: Record<Role, Group[]> = {
     { label: 'Operations', items: [
       { label: 'Reports', href: '/admin/reports', icon: FileText },
       { label: 'Audit Logs', href: '/admin/audit-logs', icon: Activity },
+      { label: 'Archives', href: '/admin/archives', icon: Archive },
     ] },
     { label: 'Management', items: [
       { label: 'Users', href: '/admin/users', icon: Users },
@@ -122,6 +126,31 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     if (flash?.error) toast.error(flash.error);
   }, [flash]);
 
+  const handleIncomingReport = useCallback((event: ReportUpdatedEvent) => {
+    if (!event.created) return;
+    const summary = [event.incident_type ?? 'Incident', event.location, event.reporter_name].filter(Boolean).join(' · ');
+    toast.warning(event.reference ? `New incident report: ${event.reference}` : 'New incident report', {
+      description: summary || undefined,
+      action: {
+        label: 'View',
+        onClick: () => router.visit(`/dispatcher/reports/${event.id}`),
+      },
+    });
+  }, []);
+
+  const handleIncomingSchedule = useCallback((event: ScheduleUpdatedEvent) => {
+    if (!event.created) return;
+    const when = [event.preferred_date, event.preferred_time].filter(Boolean).join(' ');
+    const summary = [when, event.address, event.resident_name].filter(Boolean).join(' · ');
+    toast.info(event.service_type ? `New service request: ${event.service_type}` : 'New service request', {
+      description: summary || undefined,
+      action: {
+        label: 'View',
+        onClick: () => router.visit('/dispatcher/schedule'),
+      },
+    });
+  }, []);
+
   const brand = (
     <div className="flex h-12 shrink-0 items-center gap-2.5 border-b px-4">
       <img src="/mdrrmo-logo.webp" alt="" width={26} height={26} className="size-[26px] object-contain" />
@@ -133,6 +162,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <VoiceCalls user={auth.user}>
+      {auth.user.role === 'dispatcher' && (
+        <>
+          <DispatchReportRealtime onEvent={handleIncomingReport} />
+          <DispatchScheduleRealtime onEvent={handleIncomingSchedule} />
+        </>
+      )}
       <div className="min-h-dvh lg:grid lg:grid-cols-[14.5rem_minmax(0,1fr)]">
         <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:border focus:bg-card focus:px-3 focus:py-2 focus:text-sm">Skip to content</a>
 
@@ -153,6 +188,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               {parent && <><span className="hidden text-muted-foreground sm:inline">{parent}</span><span aria-hidden="true" className="hidden text-muted-foreground sm:inline">/</span></>}
               <span className="truncate font-medium">{current?.label ?? 'Workspace'}</span>
             </div>
+
+            <ThemeToggle />
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

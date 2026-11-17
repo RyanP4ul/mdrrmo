@@ -1,10 +1,11 @@
-import { Head, Link, useForm } from '@inertiajs/react';
+import { Head, useForm } from '@inertiajs/react';
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { route } from 'ziggy-js';
-import { Eye, EyeOff, LoaderCircle, Siren, TriangleAlert } from 'lucide-react';
+import { Eye, EyeOff, LoaderCircle, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 export default function Login() {
     const form = useForm({ email: '', password: '' });
@@ -37,12 +38,15 @@ export default function Login() {
             <Head title="Sign in" />
 
             <div className="w-full max-w-sm">
-                <div className="mb-6 flex items-center gap-3">
-                    <img src="/mdrrmo-logo.webp" alt="" width={44} height={44} className="size-11 object-contain" />
-                    <div className="leading-tight">
-                        <p className="text-base font-semibold tracking-wide">MDRRMO</p>
-                        <p className="text-xs text-muted-foreground">Municipal Disaster Risk Reduction and Management Office</p>
+                <div className="mb-6 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                        <img src="/mdrrmo-logo.webp" alt="" width={44} height={44} className="size-11 object-contain" />
+                        <div className="leading-tight">
+                            <p className="text-base font-semibold tracking-wide">MDRRMO</p>
+                            <p className="text-xs text-muted-foreground">Municipal Disaster Risk Reduction and Management Office</p>
+                        </div>
                     </div>
+                    <ThemeToggle className="shrink-0" />
                 </div>
 
                 <section aria-labelledby="login-heading" className="rounded-lg border bg-card p-6">
@@ -88,15 +92,6 @@ export default function Login() {
                         <p role="status" className="sr-only">{form.processing ? 'Signing in. Please wait.' : ''}</p>
                     </form>
                 </section>
-
-                <Link href={route('guest.report')}
-                    className="mt-3 flex items-start gap-3 rounded-lg border border-critical/30 bg-critical-soft p-4 text-critical transition-colors hover:border-critical/50">
-                    <Siren className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-                    <span className="text-sm">
-                        <span className="block font-semibold">Report an emergency</span>
-                        <span className="block text-xs opacity-90">No account needed. Guests can submit incident reports only.</span>
-                    </span>
-                </Link>
 
                 <p className="mt-6 text-center text-xs text-muted-foreground">Trouble signing in? Contact your MDRRMO administrator.</p>
             </div>

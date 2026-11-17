@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\Archivable;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -12,7 +13,7 @@ use Laravel\Sanctum\HasApiTokens;
 
 abstract class User extends Authenticatable
 {
-    use HasApiTokens, HasFactory, Notifiable;
+    use Archivable, HasApiTokens, HasFactory, Notifiable;
 
     protected $guarded = ['id'];
 
