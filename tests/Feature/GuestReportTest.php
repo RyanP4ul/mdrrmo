@@ -148,4 +148,18 @@ class GuestReportTest extends TestCase
         $this->assertDatabaseCount('resident_notifications', 0);
         $this->assertDatabaseHas('driver_notifications', ['driver_id' => $driver->id, 'report_id' => $report->id]);
     }
+
+    public function test_guest_submission_accepts_incident_type_name_when_id_is_unavailable(): void
+    {
+        $payload = $this->payload();
+        unset($payload['incident_type_id']);
+        $payload['incident_type_name'] = 'Fire';
+
+        $response = $this->postJson('/api/guest/reports', $payload, ['Idempotency-Key' => (string) Str::uuid()])->assertCreated();
+        $type = IncidentType::where('name', 'Fire')->firstOrFail();
+        $this->assertDatabaseHas('emergency_reports', [
+            'reference' => $response->json('reference'),
+            'incident_type_id' => $type->id,
+        ]);
+    }
 }

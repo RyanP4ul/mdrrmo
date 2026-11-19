@@ -69,7 +69,7 @@ class GuestSosCallTest extends TestCase
     {
         $admin = AdminUser::factory()->create();
         $payload = ['first_name' => 'Dispatch', 'last_name' => 'Office', 'email' => 'dispatch-phone@example.test',
-            'contact_number' => '09999999999', 'phone_number' => '+639123456789', 'role' => 'dispatcher', 'status' => 'active'];
+            'password' => 'ValidPass123', 'contact_number' => '09999999999', 'phone_number' => '+639123456789', 'role' => 'dispatcher', 'status' => 'active'];
         $this->actingAs($admin)->post(route('admin.users.store'), $payload)->assertRedirect();
         $dispatcher = DispatcherUser::where('email', $payload['email'])->firstOrFail();
         $this->assertSame('+639123456789', $dispatcher->phone_number);

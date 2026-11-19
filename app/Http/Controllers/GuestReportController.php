@@ -33,7 +33,8 @@ class GuestReportController extends Controller
             $request->merge(['reporter_contact' => preg_replace('/[\s-]+/', '', $request->input('reporter_contact'))]);
         }
         $data = $request->validate([
-            'incident_type_id' => ['required', 'integer', 'exists:incident_types,id'],
+            'incident_type_id' => ['required_without:incident_type_name', 'nullable', 'integer', 'exists:incident_types,id'],
+            'incident_type_name' => ['required_without:incident_type_id', 'nullable', 'string', 'max:255'],
             'reporter_type' => ['required', 'in:victim,witness'],
             'reporter_name' => ['required', 'string', 'max:121', 'regex:/^\S.{0,59} \S.{0,59}$/u'],
             'reporter_contact' => ['required', 'string', 'regex:/^(09\d{9}|\+639\d{9})$/'],
@@ -42,7 +43,20 @@ class GuestReportController extends Controller
             'lng' => ['required', 'numeric', 'between:-180,180'],
             'description' => ['required', 'string', 'max:2000'],
         ]);
-        $type = IncidentType::query()->findOrFail($data['incident_type_id']);
+        if (! empty($data['incident_type_id'])) {
+            $type = IncidentType::query()->findOrFail($data['incident_type_id']);
+        } else {
+            $name = trim((string) $data['incident_type_name']);
+            $type = IncidentType::query()
+                ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                ->first()
+                ?? IncidentType::query()->firstOrCreate(
+                    ['name' => $name],
+                    ['description' => $name, 'priority' => 'high', 'color' => '#6b7280'],
+                );
+            $data['incident_type_id'] = $type->id;
+        }
+        unset($data['incident_type_name']);
         $report = EmergencyReport::query()->create($data + [
             'reference' => EmergencyReport::generateReference(),
             'status' => 'pending',

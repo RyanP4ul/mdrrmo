@@ -1,6 +1,6 @@
 import { Head, router, useForm } from '@inertiajs/react';
 import { route } from 'ziggy-js';
-import { Eye, Moon, Pencil, Plus, Shield, Sun, Trash2, Truck, Users, X } from 'lucide-react';
+import { Pencil, Plus, Shield, Trash2, Truck, Users, X } from 'lucide-react';
 import { useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
 import { PageHeader } from '@/components/PageHeader';
@@ -15,31 +15,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useServerFilters } from '@/hooks/useServerFilters';
 import { formatDateTime } from '@/lib/utils';
 import type { Paginated } from '@/types';
 
-type ShiftTeamType = 'day' | 'night';
 interface Member { id?: number; user_id?: number | null; name: string; role: string | null; status?: string }
-interface Driver { id: number; name: string; shift_team?: ShiftTeamType | null }
+interface Driver { id: number; name: string }
 interface Shift { id: number; start_time: string; end_time: string; status: string; members: Member[] }
-interface Team { id: number; team_name: string; status: string; shift_team?: ShiftTeamType | null; vehicle_name?: string | null; members: Member[]; shifts: Shift[] }
-interface ShiftView { active: ShiftTeamType; dispatcherShift: ShiftTeamType | null; canEdit: boolean }
-interface RosterMember { id: number; name: string; status?: string; shift_team?: ShiftTeamType | null; assignment_type: 'paired' | 'solo' | 'unassigned'; role: string | null; team_names: string[] }
-interface ShiftRoster {
-  shift: ShiftTeamType;
-  total: number;
-  pairedCount: number;
-  soloCount: number;
-  unassignedCount: number;
-  driversCount: number;
-  respondersCount: number;
-  members: RosterMember[];
-}
+interface Team { id: number; team_name: string; status: string; vehicle_name?: string | null; members: Member[]; shifts: Shift[] }
+interface RosterMember { id: number; name: string; status?: string; assignment_type: 'paired' | 'solo' | 'unassigned'; role: string | null; team_names: string[] }
 
 const STATUSES = ['active', 'inactive', 'on-leave', 'off-duty'];
-const shiftLabel = (shift: ShiftTeamType) => (shift === 'day' ? 'Day Team' : 'Night Team');
 
 const ASSIGNMENT_STYLES: Record<RosterMember['assignment_type'], string> = {
   paired: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300',
@@ -51,29 +37,24 @@ export default function Responders({
   teams,
   filters,
   drivers,
-  shiftView,
-  shiftRoster,
   allMembers = [],
 }: {
   teams: Paginated<Team>;
   filters: Record<string, string>;
   drivers: Driver[];
-  shiftView: ShiftView;
-  shiftRoster: ShiftRoster;
   allMembers?: RosterMember[];
 }) {
   const { values, set } = useServerFilters(
-    { search: filters.search ?? '', status: filters.status ?? '', shift: shiftView.active },
-    ['teams', 'shiftRoster', 'allMembers', 'shiftView'],
+    { search: filters.search ?? '', status: filters.status ?? '' },
+    ['teams', 'allMembers'],
   );
   const [editing, setEditing] = useState<Team | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [del, setDel] = useState<Team | null>(null);
 
-  const form = useForm<{ team_name: string; status: string; shift_team: ShiftTeamType; members: Member[]; driver_user_id: number | null }>({
+  const form = useForm<{ team_name: string; status: string; members: Member[]; driver_user_id: number | null }>({
     team_name: '',
     status: 'active',
-    shift_team: shiftView.active,
     members: [{ name: '', role: 'Responder' }],
     driver_user_id: null,
   });
@@ -81,15 +62,6 @@ export default function Responders({
   const assignedToTeamIds = new Set(
     allMembers.filter((member) => member.team_names.length > 0).map((member) => member.id),
   );
-
-  const switchShift = (nextShift: ShiftTeamType) => {
-    if (nextShift === shiftView.active) return;
-    router.get(
-      route('dispatcher.responders.index'),
-      { ...values, shift: nextShift },
-      { preserveState: true, preserveScroll: true },
-    );
-  };
 
   const openForm = (t?: Team) => {
     setEditing(t ?? null);
@@ -99,14 +71,12 @@ export default function Responders({
         ? {
             team_name: t.team_name,
             status: t.status,
-            shift_team: t.shift_team ?? shiftView.active,
             members: t.members.map((m) => ({ ...m })),
             driver_user_id: t.members.find((m) => m.role?.toLowerCase() === 'driver')?.user_id ?? null,
           }
         : {
             team_name: '',
             status: 'active',
-            shift_team: shiftView.active,
             members: [{ name: '', role: 'Responder' }],
             driver_user_id: null,
           },
@@ -120,65 +90,22 @@ export default function Responders({
     editing ? form.put(route('dispatcher.responders.update', editing.id), o) : form.post(route('dispatcher.responders.store'), o);
   };
 
-  const removeFromShiftRoster = (driverId: number) => {
-    router.patch(
-      route('dispatcher.responders.shift-roster.update', driverId),
-      { shift_team: null },
-      { preserveScroll: true },
-    );
-  };
-
   return (
     <AppLayout>
       <Head title="Response Teams" />
       <PageHeader
         icon={Shield}
         title="Response Teams"
-        description="Pairings, solo assignments, and shift rosters"
+        description="Pairings and solo assignments"
         actions={
-          shiftView.canEdit ? (
-            <Button onClick={() => openForm()}>
-              <Plus className="mr-1 size-4" />
-              New team
-            </Button>
-          ) : undefined
+          <Button onClick={() => openForm()}>
+            <Plus className="mr-1 size-4" />
+            New team
+          </Button>
         }
       />
 
-      <Tabs
-        value={shiftView.active}
-        onValueChange={(next) => switchShift(next === 'night' ? 'night' : 'day')}
-        className="space-y-4"
-      >
-        <TabsList aria-label="Shift view">
-          <TabsTrigger value="day">
-            <Sun className="size-3.5" />
-            Day Team
-          </TabsTrigger>
-          <TabsTrigger value="night">
-            <Moon className="size-3.5" />
-            Night Team
-          </TabsTrigger>
-        </TabsList>
-
-        {!shiftView.canEdit && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-            <div className="flex items-center gap-2">
-              <Eye className="size-4 shrink-0" />
-              <span>
-                Viewing <strong>{shiftLabel(shiftView.active)}</strong> in read-only handover mode.
-                {shiftView.dispatcherShift && ` Your assigned shift is ${shiftLabel(shiftView.dispatcherShift)}.`}
-              </span>
-            </div>
-            {shiftView.dispatcherShift && (
-              <Button size="sm" variant="outline" onClick={() => switchShift(shiftView.dispatcherShift!)}>
-                Return to {shiftLabel(shiftView.dispatcherShift)}
-              </Button>
-            )}
-          </div>
-        )}
-
-        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           {/* Left side: Pairs by pairs displaying Team, Members */}
           <div className="space-y-4">
             <FilterBar search={values.search} onSearch={(v) => set('search', v)} placeholder="Search team name…">
@@ -194,8 +121,8 @@ export default function Responders({
               <div className="rounded-lg border bg-card">
                 <EmptyState
                   icon={Shield}
-                  title={`No ${shiftLabel(shiftView.active)} assignments found`}
-                  hint={shiftView.canEdit ? 'Create a pairing or solo assignment to start scheduling shifts.' : 'No assignments recorded for this shift.'}
+                  title="No teams found"
+                  hint="Create a pairing or solo assignment to get started."
                 />
               </div>
             ) : (
@@ -221,16 +148,14 @@ export default function Responders({
                               <span>{t.vehicle_name}</span>
                             </div>
                           )}
-                          {shiftView.canEdit && (
-                            <div className="flex items-center">
-                              <Button variant="ghost" size="icon-sm" aria-label={`Edit ${t.team_name}`} onClick={() => openForm(t)}>
-                                <Pencil className="size-3.5" />
-                              </Button>
-                              <Button variant="ghost" size="icon-sm" aria-label={`Delete ${t.team_name}`} className="text-destructive" onClick={() => setDel(t)}>
-                                <Trash2 className="size-3.5" />
-                              </Button>
-                            </div>
-                          )}
+                          <div className="flex items-center">
+                            <Button variant="ghost" size="icon-sm" aria-label={`Edit ${t.team_name}`} onClick={() => openForm(t)}>
+                              <Pencil className="size-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon-sm" aria-label={`Delete ${t.team_name}`} className="text-destructive" onClick={() => setDel(t)}>
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </div>
                         </div>
                       </div>
 
@@ -275,25 +200,21 @@ export default function Responders({
                                   <span className="text-muted-foreground">
                                     {formatDateTime(s.start_time)} → {formatDateTime(s.end_time)}
                                   </span>
-                                  {shiftView.canEdit ? (
-                                    <Select
-                                      value={s.status}
-                                      onValueChange={(v) => router.patch(route('dispatcher.shifts.update', [t.id, s.id]), { status: v }, { preserveScroll: true })}
-                                    >
-                                      <SelectTrigger className="h-7 w-28 text-xs" aria-label="Shift status">
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {['on-shift', 'off-shift', 'on-break'].map((x) => (
-                                          <SelectItem key={x} value={x} className="capitalize">
-                                            {x.replace('-', ' ')}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  ) : (
-                                    <StatusBadge value={s.status} />
-                                  )}
+                                  <Select
+                                    value={s.status}
+                                    onValueChange={(v) => router.patch(route('dispatcher.shifts.update', [t.id, s.id]), { status: v }, { preserveScroll: true })}
+                                  >
+                                    <SelectTrigger className="h-7 w-28 text-xs" aria-label="Shift status">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {['on-shift', 'off-shift', 'on-break'].map((x) => (
+                                        <SelectItem key={x} value={x} className="capitalize">
+                                          {x.replace('-', ' ')}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
                                 </div>
                               ))}
                             </div>
@@ -318,7 +239,7 @@ export default function Responders({
                   All Members ({allMembers.length})
                 </CardTitle>
                 <CardDescription>
-                  Personnel directory, shift assignment, and status ({shiftLabel(shiftRoster.shift)} active: {shiftRoster.total})
+                  Personnel directory and team assignment
                 </CardDescription>
               </div>
             </CardHeader>
@@ -332,8 +253,6 @@ export default function Responders({
                       <div className="min-w-0">
                         <p className="truncate font-medium">{m.name}</p>
                         <p className="truncate text-xs text-muted-foreground">
-                          {m.shift_team ? shiftLabel(m.shift_team) : 'No shift'}
-                          {' · '}
                           {m.team_names.length > 0 ? `${m.team_names.join(', ')}${m.role ? ` (${m.role})` : ''}` : 'No team'}
                         </p>
                       </div>
@@ -342,18 +261,6 @@ export default function Responders({
                           {m.assignment_type}
                         </span>
                         {m.status && <StatusBadge value={m.status} />}
-                        {shiftView.canEdit && m.shift_team === shiftView.active && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 text-muted-foreground hover:text-destructive"
-                            aria-label={`Remove ${m.name} from ${shiftLabel(shiftView.active)}`}
-                            onClick={() => removeFromShiftRoster(m.id)}
-                          >
-                            <X className="size-3.5" />
-                          </Button>
-                        )}
                       </div>
                     </li>
                   ))}
@@ -361,14 +268,13 @@ export default function Responders({
               )}
             </CardContent>
           </Card>
-        </div>
-      </Tabs>
+      </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit team' : 'New team'}</DialogTitle>
-            <DialogDescription>Select at least one driver/responder for this {shiftLabel(form.data.shift_team)} assignment.</DialogDescription>
+            <DialogDescription>Select at least one driver/responder for this team.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -389,23 +295,6 @@ export default function Responders({
                       {s.replace('-', ' ')}
                     </SelectItem>
                   ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className={`space-y-1.5 ${editing ? '' : 'sm:col-span-2'}`}>
-              <Label>Shift</Label>
-              <Select
-                value={form.data.shift_team}
-                disabled={shiftView.dispatcherShift !== null}
-                onValueChange={(v) => form.setData('shift_team', v === 'night' ? 'night' : 'day')}
-              >
-                <SelectTrigger className="w-full" aria-label="Shift">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="day">Day Team</SelectItem>
-                  <SelectItem value="night">Night Team</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -485,7 +374,6 @@ export default function Responders({
                               availableDrivers.map((driver) => (
                                 <SelectItem key={driver.id} value={String(driver.id)}>
                                   {driver.name}
-                                  {driver.shift_team ? ` (${shiftLabel(driver.shift_team)})` : ''}
                                 </SelectItem>
                               ))
                             )}

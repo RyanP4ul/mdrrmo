@@ -16,7 +16,6 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -48,6 +47,7 @@ class UserController extends Controller
             });
 
         $residents = ResidentUser::query()
+            ->withCount(['reports', 'schedules'])
             ->when($filters['res_search'] ?? null, fn ($query, string $search) => $query->where(fn ($query) => $query
                 ->where('first_name', 'like', "%{$search}%")
                 ->orWhere('last_name', 'like', "%{$search}%")
@@ -78,14 +78,14 @@ class UserController extends Controller
     public function store(Request $request)
     {
         $data = $this->validated($request);
-        $password = Str::password(10, symbols: false);
+        $password = $data['password'];
         $model = Account::modelForRole($data['role']);
-        unset($data['role']);
+        unset($data['role'], $data['password']);
         $user = (new $model($data))->forceFill(['password' => $password]);
         $user->save();
         Audit::record('CREATE_USER', "Created {$user->role} account for {$user->full_name}");
 
-        return back()->with('success', "User created. Temporary password: {$password}");
+        return back()->with('success', 'User created.');
     }
 
     public function update(Request $request, string $account)
@@ -101,11 +101,36 @@ class UserController extends Controller
             ]);
         }
 
-        unset($data['role']);
-        $user->fill($data)->save();
+        $password = $data['password'] ?? null;
+        unset($data['role'], $data['password']);
+        $user->fill($data);
+        if (filled($password)) {
+            $user->forceFill(['password' => $password]);
+        }
+        $user->save();
         Audit::record('UPDATE_USER', "Updated {$user->full_name}");
 
         return back()->with('success', 'User updated.');
+    }
+
+    public function updateStatus(Request $request, string $account)
+    {
+        $user = Account::findByKey($account);
+        abort_unless($user, 404);
+        abort_if(
+            Account::keyFor($user) === Account::keyFor($request->user()),
+            422,
+            'You cannot deactivate your own account.',
+        );
+
+        $data = $request->validate([
+            'status' => ['required', 'in:active,inactive'],
+        ]);
+
+        $user->forceFill(['status' => $data['status']])->save();
+        Audit::record('UPDATE_USER', "Updated {$user->full_name} status to {$data['status']}");
+
+        return back()->with('success', $data['status'] === 'active' ? 'User activated.' : 'User deactivated.');
     }
 
     public function destroy(Request $request, string $account, ArchiveService $archives)
@@ -202,6 +227,7 @@ class UserController extends Controller
             'last_name' => ['required', 'string', 'max:60'],
             'middle_initial' => ['nullable', 'string', 'max:2'],
             'email' => $emailRules,
+            'password' => [$user ? 'nullable' : 'required', 'string', 'min:8', 'max:128'],
             'contact_number' => ['required', 'string', 'max:20'],
             'phone_number' => ['exclude_unless:role,dispatcher', 'nullable', 'string', 'max:28', 'regex:/^\+?[0-9][0-9 ()-]{2,24}$/D'],
             'date_of_birth' => ['nullable', 'date'],

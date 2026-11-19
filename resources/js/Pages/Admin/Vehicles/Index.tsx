@@ -389,7 +389,9 @@ export default function VehiclesIndex({
           <DialogHeader>
             <DialogTitle>{editing ? `Edit vehicle · ${editing.plate_number}` : 'Add vehicle'}</DialogTitle>
             <DialogDescription>
-              Configure the plate number, assigned response team, and availability/maintenance status.
+              {editing
+                ? 'Configure the plate number, assigned response team, and availability/maintenance status.'
+                : 'Configure the plate number, vehicle type, and assigned response team.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3.5">
@@ -412,7 +414,7 @@ export default function VehiclesIndex({
               </Field>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className={editing ? 'grid gap-3 sm:grid-cols-2' : 'grid gap-3'}>
               <Field label="Vehicle type *" htmlFor="v-type" error={vErrors.vehicle_type}>
                 <Select
                   value={vehicleForm.data.vehicle_type}
@@ -431,18 +433,20 @@ export default function VehiclesIndex({
                 </Select>
               </Field>
 
-              <Field label="Availability / Status *" htmlFor="v-status" error={vErrors.status}>
-                <Select value={vehicleForm.data.status} onValueChange={(v) => vehicleForm.setData('status', v)}>
-                  <SelectTrigger id="v-status" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="available">Available</SelectItem>
-                    <SelectItem value="maintenance">Under Maintenance</SelectItem>
-                    <SelectItem value="offline">Offline</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
+              {editing && (
+                <Field label="Availability / Status *" htmlFor="v-status" error={vErrors.status}>
+                  <Select value={vehicleForm.data.status} onValueChange={(v) => vehicleForm.setData('status', v)}>
+                    <SelectTrigger id="v-status" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="available">Available</SelectItem>
+                      <SelectItem value="maintenance">Under Maintenance</SelectItem>
+                      <SelectItem value="offline">Offline</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
             </div>
 
             <Field label="Assigned response team" htmlFor="v-team" error={vErrors.response_team_id}>

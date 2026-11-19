@@ -9,7 +9,6 @@ import {
   FileText,
   Info,
   Loader2,
-  ShieldCheck,
   X,
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -22,7 +21,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -182,7 +180,6 @@ export function OperationsPdfReportPanel({
   const [weekDate, setWeekDate] = useState<string>(todayIso);
   const [month, setMonth] = useState<number>(currentMonth);
   const [year, setYear] = useState<number>(currentYear);
-  const [includePatientDetails, setIncludePatientDetails] = useState<boolean>(true);
 
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
   const [summaryLoading, setSummaryLoading] = useState<boolean>(false);
@@ -218,7 +215,6 @@ export function OperationsPdfReportPanel({
       params.set('month', String(month));
       params.set('year', String(year));
     }
-    params.set('include_patient_details', includePatientDetails ? '1' : '0');
     if (mode) {
       params.set('mode', mode);
     }
@@ -267,7 +263,7 @@ export function OperationsPdfReportPanel({
 
     void loadSummary();
     return () => controller.abort();
-  }, [periodType, weekDate, month, year, includePatientDetails]);
+  }, [periodType, weekDate, month, year]);
 
   useEffect(() => {
     return () => {
@@ -581,29 +577,6 @@ export function OperationsPdfReportPanel({
               </AlertDescription>
             </Alert>
           )}
-
-          {/* Privacy Control */}
-          <div className="flex items-start gap-3 rounded-lg border p-3.5">
-            <Checkbox
-              id="include-patient-details"
-              disabled={isGenerating}
-              checked={includePatientDetails}
-              onCheckedChange={(checked) => setIncludePatientDetails(checked === true)}
-              className="mt-0.5"
-            />
-            <div className="space-y-0.5">
-              <Label
-                htmlFor="include-patient-details"
-                className="flex cursor-pointer items-center gap-1.5 text-sm font-medium"
-              >
-                <ShieldCheck className="size-4 text-muted-foreground" />
-                Include full patient names, addresses, and contact numbers in Section 2
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                Enabled by default for authorized Admin reports to show full patient identities, residential addresses, and contact numbers in Section 2. Uncheck to mask identifying fields.
-              </p>
-            </div>
-          </div>
 
           {pdfError && (
             <Alert variant="destructive">

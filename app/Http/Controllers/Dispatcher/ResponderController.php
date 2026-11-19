@@ -27,10 +27,6 @@ class ResponderController extends Controller
         $canEditShift = $dispatcherShift === null || $dispatcherShift === $activeShift;
 
         $teamsQuery = ResponseTeam::with(['members', 'vehicles', 'shifts' => fn ($q) => $q->latest('start_time')->limit(5), 'shifts.members:id,name,role'])
-            ->where(function ($q) use ($activeShift): void {
-                $q->where('shift_team', $activeShift)
-                    ->when($activeShift === 'day', fn ($sub) => $sub->orWhereNull('shift_team'));
-            })
             ->when($f['search'] ?? null, fn ($q, $s) => $q->where('team_name', 'like', "%$s%"))
             ->when($f['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
             ->orderBy('team_name');

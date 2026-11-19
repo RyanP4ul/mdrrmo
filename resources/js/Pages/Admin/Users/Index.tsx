@@ -2,10 +2,12 @@ import { Head, router, useForm } from "@inertiajs/react";
 import {
     Check,
     Eye,
+    EyeOff,
     Pencil,
     Plus,
     Trash2,
     UserCheck,
+    UserX,
     Users,
     X,
 } from "lucide-react";
@@ -47,6 +49,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useServerFilters } from "@/hooks/useServerFilters";
+import { formatDateTime } from "@/lib/utils";
 import type { Paginated } from "@/types";
 
 interface U {
@@ -72,6 +75,10 @@ interface U {
     id_document_path: string | null;
     id_document_url?: string | null;
     registration_status: string | null;
+    created_at?: string | null;
+    email_verified_at?: string | null;
+    reports_count?: number;
+    schedules_count?: number;
     full_name: string;
 }
 interface Props {
@@ -80,11 +87,23 @@ interface Props {
     filters: Record<string, string>;
 }
 
+const computeAge = (dob?: string | null): number | null => {
+    if (!dob) return null;
+    const birth = new Date(dob);
+    if (Number.isNaN(birth.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+    return age >= 0 ? age : null;
+};
+
 const blank = {
     first_name: "",
     last_name: "",
     middle_initial: "",
     email: "",
+    password: "",
     contact_number: "",
     phone_number: "",
     date_of_birth: "",
@@ -117,6 +136,7 @@ export default function Index({ employees, residents, filters }: Props) {
     });
     const [editing, setEditing] = useState<U | null>(null);
     const [open, setOpen] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
     const [del, setDel] = useState<U | null>(null);
     const [view, setView] = useState<U | null>(null);
     const [accept, setAccept] = useState<U | null>(null);
@@ -125,6 +145,7 @@ export default function Index({ employees, residents, filters }: Props) {
     const err = form.errors as Record<string, string>;
     const bind = (k: keyof typeof blank) => ({
         id: k,
+        name: k,
         value: form.data[k] ?? "",
         onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
             form.setData(k, e.target.value),
@@ -132,6 +153,7 @@ export default function Index({ employees, residents, filters }: Props) {
 
     const openForm = (u?: U) => {
         setEditing(u ?? null);
+        setShowPassword(false);
         form.clearErrors();
         u
             ? form.setData({
@@ -149,6 +171,7 @@ export default function Index({ employees, residents, filters }: Props) {
         const o = { preserveScroll: true, onSuccess: () => setOpen(false) };
         form.transform((data) => ({
             ...data,
+            password: editing ? data.password || null : data.password,
             shift_team: data.shift_team || null,
         }));
         editing
@@ -159,6 +182,12 @@ export default function Index({ employees, residents, filters }: Props) {
         router.patch(
             route("admin.residents.review", u.account_key),
             { decision },
+            { preserveScroll: true },
+        );
+    const toggleStatus = (u: U) =>
+        router.patch(
+            route("admin.users.status", u.account_key),
+            { status: u.status === "active" ? "inactive" : "active" },
             { preserveScroll: true },
         );
     const pick = (k: string) => (v: string) =>
@@ -226,8 +255,9 @@ export default function Index({ employees, residents, filters }: Props) {
                                             <TableHead className="hidden md:table-cell">Email</TableHead>
                                             <TableHead className="hidden sm:table-cell">Contact</TableHead>
                                             <TableHead>Role</TableHead>
+                                            <TableHead className="hidden md:table-cell">Shift</TableHead>
                                             <TableHead>Status</TableHead>
-                                            <TableHead className="w-28 text-center">
+                                            <TableHead className="w-44 text-center">
                                                 Actions
                                             </TableHead>
                                         </TableRow>
@@ -247,33 +277,73 @@ export default function Index({ employees, residents, filters }: Props) {
                                                 <TableCell className="capitalize">
                                                     {u.role}
                                                 </TableCell>
+                                                <TableCell className="hidden md:table-cell text-muted-foreground">
+                                                    {u.shift_team === "day"
+                                                        ? "Day"
+                                                        : u.shift_team === "night"
+                                                          ? "Night"
+                                                          : u.role === "driver/responder"
+                                                            ? "Unassigned"
+                                                            : "—"}
+                                                </TableCell>
                                                 <TableCell>
                                                     <StatusBadge
                                                         value={u.status}
                                                     />
                                                 </TableCell>
                                                 <TableCell className="text-center">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        aria-label={`Edit ${u.full_name}`}
-                                                        onClick={() =>
-                                                            openForm(u)
-                                                        }
-                                                    >
-                                                        <Pencil className="size-4" />
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        aria-label={`Delete ${u.full_name}`}
-                                                        className="text-destructive"
-                                                        onClick={() =>
-                                                            setDel(u)
-                                                        }
-                                                    >
-                                                        <Trash2 className="size-4" />
-                                                    </Button>
+                                                    <div className="inline-flex items-center gap-1">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className={
+                                                                u.status === "active"
+                                                                    ? "text-amber-600 hover:text-amber-700"
+                                                                    : "text-emerald-600 hover:text-emerald-700"
+                                                            }
+                                                            aria-label={
+                                                                u.status === "active"
+                                                                    ? `Deactivate ${u.full_name}`
+                                                                    : `Activate ${u.full_name}`
+                                                            }
+                                                            onClick={() =>
+                                                                toggleStatus(u)
+                                                            }
+                                                        >
+                                                            {u.status === "active" ? (
+                                                                <>
+                                                                    <UserX className="mr-1 size-4" />
+                                                                    Deactivate
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <UserCheck className="mr-1 size-4" />
+                                                                    Activate
+                                                                </>
+                                                            )}
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            aria-label={`Edit ${u.full_name}`}
+                                                            onClick={() =>
+                                                                openForm(u)
+                                                            }
+                                                        >
+                                                            <Pencil className="size-4" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            aria-label={`Delete ${u.full_name}`}
+                                                            className="text-destructive"
+                                                            onClick={() =>
+                                                                setDel(u)
+                                                            }
+                                                        >
+                                                            <Trash2 className="size-4" />
+                                                        </Button>
+                                                    </div>
                                                 </TableCell>
                                             </TableRow>
                                         ))}
@@ -383,98 +453,136 @@ export default function Index({ employees, residents, filters }: Props) {
                         </DialogTitle>
                         <DialogDescription>
                             {editing
-                                ? "Update account details."
-                                : "A temporary password is generated and shown once after saving."}
+                                ? "Update account details or set a new password."
+                                : "Enter account details and set a password for the employee."}
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                        <Field
-                            htmlFor="first_name"
-                            label="First name" required
-                            error={err.first_name}
-                        >
-                            <Input
-                                type="text"
-                                autoComplete="given-name"
-                                {...bind("first_name")}
-                            />
-                        </Field>
-                        <Field
-                            htmlFor="last_name"
-                            label="Last name" required
-                            error={err.last_name}
-                        >
-                            <Input
-                                type="text"
-                                autoComplete="family-name"
-                                {...bind("last_name")}
-                            />
-                        </Field>
-                        <Field htmlFor="email" label="Email" required error={err.email}>
-                            <Input
-                                type="email"
-                                autoComplete="off"
-                                {...bind("email")}
-                            />
-                        </Field>
-                        <Field
-                            htmlFor="contact_number"
-                            label="Contact" required
-                            error={err.contact_number}
-                        >
-                            <Input
-                                type="text"
-                                inputMode="tel"
-                                {...bind("contact_number")}
-                            />
-                        </Field>
-                        {form.data.role === "dispatcher" && <Field htmlFor="phone_number" label="Dispatcher SOS phone number" error={err.phone_number}>
-                            <Input type="tel" maxLength={28} {...bind("phone_number")} />
-                            <p className="text-xs text-muted-foreground">Residents and guests use this public number for regular phone calls. Include the country or area code.</p>
-                        </Field>}
-                        <Field htmlFor="role" label="Role">
-                            <Select
-                                value={form.data.role}
-                                disabled={!!editing}
-                                onValueChange={(v) => form.setData("role", v)}
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            save();
+                        }}
+                        className="space-y-4"
+                    >
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <Field
+                                htmlFor="first_name"
+                                label="First name"
+                                required
+                                error={err.first_name}
                             >
-                                <SelectTrigger id="role">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {[
-                                        "admin",
-                                        "dispatcher",
-                                        "driver/responder",
-                                    ].map((r) => (
-                                        <SelectItem
-                                            key={r}
-                                            value={r}
-                                            className="capitalize"
-                                        >
-                                            {r}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                            {editing && (
-                                <p className="text-xs text-muted-foreground">
-                                    Role is fixed because accounts are stored in
-                                    separate tables.
-                                </p>
-                            )}
-                        </Field>
-                        <Field htmlFor="status" label="Status">
-                            <Select
-                                value={form.data.status}
-                                onValueChange={(v) => form.setData("status", v)}
+                                <Input
+                                    type="text"
+                                    autoComplete="given-name"
+                                    required
+                                    {...bind("first_name")}
+                                />
+                            </Field>
+                            <Field
+                                htmlFor="last_name"
+                                label="Last name"
+                                required
+                                error={err.last_name}
                             >
-                                <SelectTrigger id="status">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {["active", "inactive", "suspended"].map(
-                                        (r) => (
+                                <Input
+                                    type="text"
+                                    autoComplete="family-name"
+                                    required
+                                    {...bind("last_name")}
+                                />
+                            </Field>
+                            <Field
+                                htmlFor="email"
+                                label="Email"
+                                required
+                                error={err.email}
+                            >
+                                <Input
+                                    type="email"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    required
+                                    {...bind("email")}
+                                />
+                            </Field>
+                            <Field
+                                htmlFor="contact_number"
+                                label="Contact"
+                                required
+                                error={err.contact_number}
+                            >
+                                <Input
+                                    type="tel"
+                                    inputMode="tel"
+                                    required
+                                    {...bind("contact_number")}
+                                />
+                            </Field>
+                            <Field
+                                htmlFor="password"
+                                label={editing ? "New password" : "Password"}
+                                required={!editing}
+                                hint={
+                                    editing
+                                        ? "Leave blank to keep the current password."
+                                        : "At least 8 characters."
+                                }
+                                error={err.password}
+                            >
+                                <div className="relative">
+                                    <Input
+                                        type={
+                                            showPassword ? "text" : "password"
+                                        }
+                                        autoComplete="new-password"
+                                        minLength={8}
+                                        maxLength={128}
+                                        required={!editing}
+                                        aria-invalid={!!err.password}
+                                        className="pr-10"
+                                        {...bind("password")}
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="absolute right-0.5 top-1/2 size-8 -translate-y-1/2 text-muted-foreground"
+                                        onClick={() =>
+                                            setShowPassword((prev) => !prev)
+                                        }
+                                        aria-label={
+                                            showPassword
+                                                ? "Hide password"
+                                                : "Show password"
+                                        }
+                                        aria-pressed={showPassword}
+                                        aria-controls="password"
+                                    >
+                                        {showPassword ? (
+                                            <EyeOff className="size-4" />
+                                        ) : (
+                                            <Eye className="size-4" />
+                                        )}
+                                    </Button>
+                                </div>
+                            </Field>
+                            <Field htmlFor="role" label="Role">
+                                <Select
+                                    value={form.data.role}
+                                    disabled={!!editing}
+                                    onValueChange={(v) =>
+                                        form.setData("role", v)
+                                    }
+                                >
+                                    <SelectTrigger id="role">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {[
+                                            "admin",
+                                            "dispatcher",
+                                            "driver/responder",
+                                        ].map((r) => (
                                             <SelectItem
                                                 key={r}
                                                 value={r}
@@ -482,101 +590,151 @@ export default function Index({ employees, residents, filters }: Props) {
                                             >
                                                 {r}
                                             </SelectItem>
-                                        ),
-                                    )}
-                                </SelectContent>
-                            </Select>
-                        </Field>
-                        {(form.data.role === "dispatcher" ||
-                            form.data.role === "driver/responder") && (
-                            <Field
-                                htmlFor="shift_team"
-                                label="Shift Team"
-                                error={err.shift_team}
-                            >
-                                <Select
-                                    value={form.data.shift_team || "none"}
-                                    onValueChange={(v) =>
-                                        form.setData(
-                                            "shift_team",
-                                            v === "none" ? "" : v,
-                                        )
-                                    }
-                                >
-                                    <SelectTrigger id="shift_team">
-                                        <SelectValue placeholder="Unassigned" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="none">
-                                            Unassigned
-                                        </SelectItem>
-                                        <SelectItem value="day">
-                                            Day Team
-                                        </SelectItem>
-                                        <SelectItem value="night">
-                                            Night Team
-                                        </SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
+                                {editing && (
+                                    <p className="text-xs text-muted-foreground">
+                                        Role is fixed because accounts are
+                                        stored in separate tables.
+                                    </p>
+                                )}
                             </Field>
-                        )}
-                    </div>
-                    <DialogFooter>
-                        <Button
-                            variant="outline"
-                            onClick={() => setOpen(false)}
-                        >
-                            Cancel
-                        </Button>
-                        <Button onClick={save} disabled={form.processing}>
-                            {editing ? "Save changes" : "Create account"}
-                        </Button>
-                    </DialogFooter>
+                            {(form.data.role === "dispatcher" ||
+                                form.data.role === "driver/responder") && (
+                                <Field
+                                    htmlFor="shift_team"
+                                    label="Shift Team"
+                                    error={err.shift_team}
+                                >
+                                    <Select
+                                        value={form.data.shift_team || "none"}
+                                        onValueChange={(v) =>
+                                            form.setData(
+                                                "shift_team",
+                                                v === "none" ? "" : v,
+                                            )
+                                        }
+                                    >
+                                        <SelectTrigger id="shift_team">
+                                            <SelectValue placeholder="Unassigned" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="none">
+                                                Unassigned
+                                            </SelectItem>
+                                            <SelectItem value="day">
+                                                Day Team
+                                            </SelectItem>
+                                            <SelectItem value="night">
+                                                Night Team
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </Field>
+                            )}
+                        </div>
+                        <DialogFooter>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => setOpen(false)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button type="submit" disabled={form.processing}>
+                                {editing ? "Save changes" : "Create account"}
+                            </Button>
+                        </DialogFooter>
+                    </form>
                 </DialogContent>
             </Dialog>
 
             <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
-                <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
+                <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
                     <DialogHeader>
                         <div className="flex flex-wrap items-center gap-2">
-                            <DialogTitle>{view?.full_name}</DialogTitle>
+                            <DialogTitle>
+                                {[
+                                    view?.first_name,
+                                    view?.middle_initial ? `${view.middle_initial}.` : null,
+                                    view?.last_name,
+                                ]
+                                    .filter(Boolean)
+                                    .join(" ") || view?.full_name}
+                            </DialogTitle>
                             {view?.registration_status && (
                                 <StatusBadge value={view.registration_status} />
                             )}
+                            {view?.status && <StatusBadge value={view.status} />}
                         </div>
-                        <DialogDescription>{view?.email}</DialogDescription>
+                        <DialogDescription>
+                            {view?.email}
+                            {view?.email_verified_at ? " · Verified" : " · Unverified"}
+                        </DialogDescription>
                     </DialogHeader>
-                    <dl className="space-y-1.5 text-sm">
-                        {[
-                            ["Contact", view?.contact_number],
-                            ...(view?.role === "dispatcher" ? [["SOS phone", view?.phone_number]] : []),
-                            ["Birth date", view?.date_of_birth?.slice(0, 10)],
-                            ["Sex", view?.sex],
-                            [
-                                "Address",
-                                [
-                                    [view?.house_no, view?.street]
+                    {view && (
+                        <div className="space-y-4 text-sm">
+                            <dl className="space-y-1.5">
+                                {(() => {
+                                    const age = computeAge(view.date_of_birth);
+                                    const birthText = view.date_of_birth
+                                        ? `${view.date_of_birth.slice(0, 10)}${age !== null ? ` (${age} yrs)` : ""}`
+                                        : null;
+                                    const streetLine = [view.house_no, view.street]
                                         .filter(Boolean)
-                                        .join(" "),
-                                    view?.barangay,
-                                    view?.city,
-                                    view?.province,
-                                ]
-                                    .filter(Boolean)
-                                    .join(", ") || "Not provided",
-                            ],
-                            ["ID type", view?.id_type],
-                        ].map(([k, v]) =>
-                            v ? (
-                                <div key={k} className="flex justify-between gap-4">
-                                    <dt className="shrink-0 text-muted-foreground">
-                                        {k}
-                                    </dt>
-                                    <dd className="text-right font-medium">{v}</dd>
+                                        .join(" ");
+                                    const fullAddress =
+                                        [streetLine, view.barangay, view.city, view.province]
+                                            .filter(Boolean)
+                                            .join(", ") || "Not provided";
+
+                                    return [
+                                        ["Contact", view.contact_number],
+                                        ["Birth date", birthText],
+                                        ["Sex", view.sex],
+                                        ["Address", fullAddress],
+                                        ["Barangay", view.barangay],
+                                        ["ID type", view.id_type],
+                                        [
+                                            "Registered",
+                                            view.created_at
+                                                ? formatDateTime(view.created_at)
+                                                : null,
+                                        ],
+                                    ];
+                                })().map(([k, v]) =>
+                                    v ? (
+                                        <div key={k} className="flex justify-between gap-4">
+                                            <dt className="shrink-0 text-muted-foreground">
+                                                {k}
+                                            </dt>
+                                            <dd className="text-right font-medium">{v}</dd>
+                                        </div>
+                                    ) : null,
+                                )}
+                            </dl>
+
+                            <div className="grid grid-cols-2 gap-2 border-t pt-3">
+                                <div className="rounded-md border bg-muted/30 px-3 py-2">
+                                    <p className="text-xs text-muted-foreground">
+                                        Emergency Reports
+                                    </p>
+                                    <p className="text-base font-semibold">
+                                        {view.reports_count ?? 0}
+                                    </p>
                                 </div>
-                            ) : null,
-                        )}
-                    </dl>
+                                <div className="rounded-md border bg-muted/30 px-3 py-2">
+                                    <p className="text-xs text-muted-foreground">
+                                        Service Bookings
+                                    </p>
+                                    <p className="text-base font-semibold">
+                                        {view.schedules_count ?? 0}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     {view?.id_document_url && (
                         <div className="space-y-1.5 border-t pt-3">
                             <p className="text-xs font-medium text-muted-foreground">

@@ -49,6 +49,7 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->grou
     Route::resource('users', Admin\UserController::class)
         ->only(['index', 'store', 'update', 'destroy'])
         ->parameters(['users' => 'account']);
+    Route::patch('users/{account}/status', [Admin\UserController::class, 'updateStatus'])->name('users.status');
     Route::patch('residents/{account}/review', [Admin\UserController::class, 'review'])->name('residents.review');
     Route::get('residents/{account}/id-document', [Admin\UserController::class, 'idDocument'])->name('residents.id-document');
     Route::get('response-teams', [Admin\ResponseTeamController::class, 'index'])->name('response-teams.index');

@@ -207,6 +207,7 @@ class RoleSeparationTest extends TestCase
                 'first_name' => 'New',
                 'last_name' => 'Dispatcher',
                 'email' => 'new.dispatcher@example.test',
+                'password' => 'ValidPass123',
                 'contact_number' => '555-0101',
                 'role' => 'dispatcher',
                 'status' => 'active',
@@ -217,6 +218,8 @@ class RoleSeparationTest extends TestCase
             'email' => 'new.dispatcher@example.test',
             'first_name' => 'New',
         ]);
+        $createdDispatcher = DispatcherUser::where('email', 'new.dispatcher@example.test')->firstOrFail();
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('ValidPass123', $createdDispatcher->password));
         $this->assertDatabaseMissing('admins', ['email' => 'new.dispatcher@example.test']);
     }
 

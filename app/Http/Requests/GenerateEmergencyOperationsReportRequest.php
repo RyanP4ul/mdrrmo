@@ -43,14 +43,6 @@ class GenerateEmergencyOperationsReportRequest extends FormRequest
 
     public function includePatientDetails(): bool
     {
-        if (! $this->user()?->hasRole('admin')) {
-            return false;
-        }
-
-        if ($this->input('include_patient_details') === null || $this->input('include_patient_details') === '') {
-            return true;
-        }
-
-        return $this->boolean('include_patient_details');
+        return (bool) $this->user()?->hasRole('admin');
     }
 }

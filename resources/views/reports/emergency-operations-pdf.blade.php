@@ -332,7 +332,7 @@
     </div>
 
     {{-- SECTION 1: REPORT OVERVIEW --}}
-    <h2 class="section-title">Section 1: Report Overview</h2>
+    <h2 class="section-title">Report Overview</h2>
 
     @if(empty($summary['category_breakdown']))
         <div class="empty-state">No emergency incidents were recorded during this reporting period.</div>
@@ -363,7 +363,7 @@
     @endif
 
     {{-- SECTION 2: PATIENT AND EMERGENCY RECORDS --}}
-    <h2 class="section-title">Section 2: Patient and Emergency Records</h2>
+    <h2 class="section-title">Patient and Emergency Records</h2>
 
     @if(empty($incidents))
         <div class="empty-state">No emergency incidents or patient records were recorded during this reporting period.</div>
@@ -398,7 +398,7 @@
     @endif
 
     {{-- SECTION 3: DISPATCH AND RESPONSE RECORDS --}}
-    <h2 class="section-title">Section 3: Dispatch and Response Records</h2>
+    <h2 class="section-title">Dispatch and Response Records</h2>
 
     @if(empty($timelines))
         <div class="empty-state">No dispatch and response records are available for this reporting period.</div>
@@ -447,7 +447,7 @@
     @endif
 
     {{-- SECTION 4: VEHICLE UTILIZATION AND LOGISTICS --}}
-    <h2 class="section-title">Section 4: Vehicle Utilization and Logistics</h2>
+    <h2 class="section-title">Vehicle Utilization and Logistics</h2>
 
     <h3 class="subsection-title">4.1 Reporting Period Deployment, Fuel, and Odometer Logs</h3>
 
@@ -614,7 +614,7 @@
 
     {{-- SECTION 5: OPERATIONAL PERFORMANCE --}}
     <div class="keep-together">
-        <h2 class="section-title">Section 5: Operational Performance</h2>
+        <h2 class="section-title">Operational Performance</h2>
 
         <h3 class="subsection-title">5.1 Performance Indicators</h3>
         <table class="formal fixed">
@@ -714,7 +714,7 @@
     @endif
 
     {{-- SECTION 6: REPORT SIGN-OFF --}}
-    <h2 class="section-title">Section 6: Report Sign-Off</h2>
+    <h2 class="section-title">Report Sign-Off</h2>
 
     <div class="signoff-wrap">
         <table class="signoff-table">
