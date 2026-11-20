@@ -179,7 +179,8 @@ class DispatchService
     /** Nearest hospitals (haversine), ETA assumes 40 km/h average. Prefers matching specialization. */
     public function recommendHospitals(EmergencyReport $report, int $limit = 3, array $excludeHospitalIds = [])
     {
-        $want = ['Medical Emergency' => 'Emergency', 'Trauma' => 'Trauma', 'Vehicular' => 'Trauma', 'Fire' => 'Burn'][$report->incidentType->name] ?? null;
+        $incidentTypeName = $report->incidentType?->name ?? '';
+        $want = ['Medical Emergency' => 'Emergency', 'Trauma' => 'Trauma', 'Vehicular' => 'Trauma', 'Fire' => 'Burn'][$incidentTypeName] ?? null;
         $columns = ['id', 'name', 'address', 'lat', 'lng', 'available_beds', 'contact_number', 'specialization'];
         $toRecommendation = function (Hospital $hospital) use ($report, $want): array {
             $km = $this->km($report->lat, $report->lng, $hospital->lat, $hospital->lng);

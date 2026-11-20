@@ -5,6 +5,8 @@ set -e
 
 echo "Starting Laravel application..."
 
+php artisan db:seed --class=HospitalSeeder --force || true
+
 php artisan serve &
 LARAVEL_PID=$!
 

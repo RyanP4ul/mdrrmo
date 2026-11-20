@@ -152,12 +152,19 @@ class MobileDriverApiController extends Controller
     public function hospitals(Request $request, EmergencyReport $report, DispatchService $dispatch): JsonResponse
     {
         abort_unless($report->assigned_driver_id === $request->user()->getKey(), 404);
+        if (! app()->runningUnitTests() && Hospital::query()->doesntExist()) {
+            app(\Database\Seeders\HospitalSeeder::class)->run();
+        }
         $trip = DispatchTrip::where('emergency_report_id', $report->id)->first();
         $excluded = array_map('intval', $trip?->unavailable_hospital_ids ?? []);
+        $hospitals = $dispatch->recommendHospitals($report, 3, $excluded);
+        if ($hospitals->isEmpty() && $excluded !== [] && Hospital::query()->exists()) {
+            $hospitals = $dispatch->recommendHospitals($report, 3, []);
+        }
 
         return response()->json([
             'report_id' => $report->getKey(),
-            'data' => $dispatch->recommendHospitals($report, 3, $excluded),
+            'data' => $hospitals,
         ]);
     }
 
@@ -193,6 +200,13 @@ class MobileDriverApiController extends Controller
         });
 
         $hospitals = $dispatch->recommendHospitals($report, 3, $excluded);
+        if ($hospitals->isEmpty() && Hospital::query()->count() > 1) {
+            $excluded = [(int) $hospital->getKey()];
+            DispatchTrip::where('emergency_report_id', $report->id)->update([
+                'unavailable_hospital_ids' => $excluded,
+            ]);
+            $hospitals = $dispatch->recommendHospitals($report, 3, $excluded);
+        }
         $nextHospital = $hospitals->firstWhere('available', true) ?? $hospitals->first();
         if ($nextHospital !== null) {
             DispatchTrip::where('emergency_report_id', $report->id)->update([
