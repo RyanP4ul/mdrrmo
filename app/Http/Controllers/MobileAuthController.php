@@ -32,7 +32,9 @@ class MobileAuthController extends Controller
     {
         MobileValidation::normalizePhone($request, 'contact');
         $data = $request->validate([
-            'name' => ['required', 'string', 'max:120'],
+            'name' => ['required_without_all:first_name,last_name', 'nullable', 'string', 'max:120'],
+            'first_name' => ['required_without:name', 'nullable', 'string', 'max:60'],
+            'last_name' => ['required_without:name', 'nullable', 'string', 'max:60'],
             'contact' => MobileValidation::phoneRules(),
             'address' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255'],
@@ -43,7 +45,36 @@ class MobileAuthController extends Controller
             'id_photo' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
         ]);
 
-        $nameParts = MobileValidation::nameParts($data['name']);
+        if (! empty($data['first_name']) && ! empty($data['last_name'])) {
+            $firstName = preg_replace('/\s+/', ' ', trim((string) $data['first_name']));
+            $lastName = preg_replace('/\s+/', ' ', trim((string) $data['last_name']));
+            if ($firstName === '' || $lastName === '' || mb_strlen($firstName) > 60 || mb_strlen($lastName) > 60) {
+                throw ValidationException::withMessages(['name' => 'Enter your first and last name, each at most 60 characters.']);
+            }
+            $nameParts = [$firstName, $lastName];
+        } else {
+            $nameParts = MobileValidation::nameParts((string) ($data['name'] ?? ''));
+        }
+
+        if (mb_strtolower($nameParts[0]) === mb_strtolower($nameParts[1])) {
+            throw ValidationException::withMessages([
+                'last_name' => 'First Name and Last Name must be different.',
+                'name' => 'First Name and Last Name must be different.',
+            ]);
+        }
+
+        $nameExists = ResidentUser::query()
+            ->whereRaw('LOWER(first_name) = ? AND LOWER(last_name) = ?', [
+                mb_strtolower($nameParts[0]),
+                mb_strtolower($nameParts[1]),
+            ])
+            ->exists();
+        if ($nameExists) {
+            throw ValidationException::withMessages([
+                'first_name' => 'A resident with this First Name and Last Name is already registered.',
+                'name' => 'A resident with this First Name and Last Name is already registered.',
+            ]);
+        }
 
         $emailExists = collect(Account::classes())->contains(
             fn (string $model): bool => $model::query()->where('email', $data['email'])->exists(),

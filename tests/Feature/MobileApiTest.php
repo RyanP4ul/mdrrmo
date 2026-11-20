@@ -234,6 +234,18 @@ class MobileApiTest extends TestCase
             'email' => 'taylor@example.test',
             'registration_status' => 'pending',
         ]);
+
+        // Duplicate First Name and Last Name is rejected even with a different email
+        $this->mobilePostJson('/api/auth/mobile/register', [
+            'first_name' => 'Taylor',
+            'last_name' => 'Resident',
+            'contact' => '09171234567',
+            'address' => 'Balagtas, Bulacan',
+            'email' => 'taylor2@example.test',
+            'password' => 'SecurePassword123',
+            'password_confirmation' => 'SecurePassword123',
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors(['first_name', 'name']);
     }
 
     public function test_schedule_notes_are_saved_and_owner_can_cancel_with_a_notification(): void

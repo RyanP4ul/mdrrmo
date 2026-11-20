@@ -126,21 +126,6 @@ export default function Show({
           <ArrowLeft className="size-4" aria-hidden="true" />
           Back to operations
         </Link>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <Link
-            href={route('dispatcher.map')}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-card px-2.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <Navigation className="size-3.5" aria-hidden="true" />
-            Live response map
-          </Link>
-          <Link
-            href={route('dispatcher.reports.index')}
-            className="inline-flex h-8 items-center rounded-md border bg-card px-2.5 font-medium text-muted-foreground transition-colors hover:text-foreground"
-          >
-            Reports archive
-          </Link>
-        </div>
       </div>
 
       <section aria-label="Incident summary" className="rounded-lg border bg-card p-5">
