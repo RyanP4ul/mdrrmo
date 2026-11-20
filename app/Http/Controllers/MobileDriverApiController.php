@@ -11,6 +11,7 @@ use App\Models\EmergencyReport;
 use App\Models\Hospital;
 use App\Models\IncidentType;
 use App\Models\MaintenanceReport;
+use App\Models\ReportForm;
 use App\Models\ResponseTeam;
 use App\Models\Vehicle;
 use App\Services\DispatchService;
@@ -18,6 +19,7 @@ use App\Services\DriverResponseProgress;
 use App\Services\EmergencyReportWorkflow;
 use App\Services\TeamRoles;
 use App\Services\VehicleMaintenanceService;
+use App\Support\Audit;
 use App\Support\MobilePage;
 use App\Support\MobileValidation;
 use Carbon\Carbon;
@@ -290,30 +292,63 @@ class MobileDriverApiController extends Controller
     {
         /** @var DriverResponderUser $driver */
         $driver = $request->user();
-        MobileValidation::normalizePhone($request, 'contact_number');
+        if ($request->filled('contact_number')) {
+            MobileValidation::normalizePhone($request, 'contact_number');
+        }
         $data = $request->validate([
-            'incident_type_id' => ['required', 'integer', 'exists:incident_types,id'],
+            'incident_type_id' => ['required_without_all:incident_type_name,type_of_incident', 'nullable', 'integer', 'exists:incident_types,id'],
+            'incident_type_name' => ['required_without_all:incident_type_id,type_of_incident', 'nullable', 'string', 'max:80'],
+            'type_of_incident' => ['nullable', 'string', 'max:80'],
+            'time_reported' => ['nullable', 'string', 'max:40'],
+            'time_of_arrival' => ['nullable', 'string', 'max:40'],
+            'date' => ['nullable', 'string', 'max:40'],
             'location' => ['required', 'string', 'max:255'],
-            'lat' => ['required', 'numeric', 'between:-90,90'],
-            'lng' => ['required', 'numeric', 'between:-180,180'],
-            'priority' => ['required', 'in:low,medium,high,critical'],
+            'lat' => ['nullable', 'numeric', 'between:-90,90'],
+            'lng' => ['nullable', 'numeric', 'between:-180,180'],
+            'priority' => ['nullable', 'in:low,medium,high,critical'],
             'patient_name' => ['required', 'string', 'max:255'],
-            'patient_age' => ['required', 'integer', 'between:0,120'],
-            'symptoms' => ['required', 'string', 'max:2000'],
-            'contact_person' => ['required', 'string', 'max:255'],
-            'contact_number' => MobileValidation::phoneRules(),
+            'patient_age' => ['required', 'integer', 'between:0,130'],
+            'sex' => ['nullable', 'in:Male,Female'],
+            'address' => ['nullable', 'string', 'max:255'],
+            'allergies' => ['nullable', 'string', 'max:1000'],
+            'medications' => ['nullable', 'string', 'max:1000'],
+            'assessment_comment' => ['nullable', 'string', 'max:2000'],
+            'treatment_management' => ['nullable', 'string', 'max:2000'],
+            'blood_pressure' => ['nullable', 'string', 'max:40'],
+            'pulse_rate' => ['nullable', 'string', 'max:40'],
+            'respiration' => ['nullable', 'string', 'max:40'],
+            'symptoms' => ['nullable', 'string', 'max:2000'],
+            'contact_person' => ['nullable', 'string', 'max:255'],
+            'contact_number' => $request->filled('contact_number')
+                ? MobileValidation::phoneRules()
+                : ['nullable', 'string', 'max:40'],
         ]);
 
-        $incidentType = IncidentType::query()->findOrFail($data['incident_type_id']);
+        if (! empty($data['incident_type_id'])) {
+            $incidentType = IncidentType::query()->findOrFail($data['incident_type_id']);
+        } else {
+            $name = trim((string) ($data['incident_type_name'] ?? $data['type_of_incident'] ?? 'Emergency'));
+            $incidentType = IncidentType::query()
+                ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                ->first()
+                ?? IncidentType::query()->firstOrCreate(
+                    ['name' => $name],
+                    ['description' => $name, 'priority' => $data['priority'] ?? 'high', 'color' => '#6b7280'],
+                );
+        }
+
+        $priority = $data['priority'] ?? $incidentType->priority ?? 'high';
+        $description = trim((string) ($data['assessment_comment'] ?? $data['symptoms'] ?? $data['treatment_management'] ?? $incidentType->name));
+
         $report = EmergencyReport::query()->create([
             'reference' => 'RPT-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
             'incident_type_id' => $incidentType->getKey(),
             'location' => $data['location'],
-            'lat' => $data['lat'],
-            'lng' => $data['lng'],
-            'description' => $data['symptoms'],
+            'lat' => $data['lat'] ?? 14.82005638956664,
+            'lng' => $data['lng'] ?? 120.90457612915165,
+            'description' => $description !== '' ? $description : $incidentType->name,
             'status' => 'pending',
-            'priority' => $data['priority'],
+            'priority' => $priority,
             'source' => 'mobile-app',
             'reporter_type' => 'victim',
             'reported_by' => $driver->getKey(),
@@ -321,19 +356,132 @@ class MobileDriverApiController extends Controller
             'reporter_name' => $driver->full_name,
             'reporter_contact' => $driver->contact_number,
             'reported_at' => now(),
-            'victim_info' => [
+            'victim_info' => array_filter([
                 'name' => $data['patient_name'],
                 'age' => $data['patient_age'],
-                'symptoms' => $data['symptoms'],
-                'contact_person' => $data['contact_person'],
-                'contact_number' => $data['contact_number'],
-            ],
+                'sex' => $data['sex'] ?? null,
+                'address' => $data['address'] ?? null,
+                'time_reported' => $data['time_reported'] ?? null,
+                'time_of_arrival' => $data['time_of_arrival'] ?? null,
+                'date' => $data['date'] ?? null,
+                'type_of_incident' => $data['type_of_incident'] ?? $incidentType->name,
+                'allergies' => $data['allergies'] ?? null,
+                'medications' => $data['medications'] ?? null,
+                'assessment_comment' => $data['assessment_comment'] ?? null,
+                'treatment_management' => $data['treatment_management'] ?? null,
+                'blood_pressure' => $data['blood_pressure'] ?? null,
+                'pulse_rate' => $data['pulse_rate'] ?? null,
+                'respiration' => $data['respiration'] ?? null,
+                'symptoms' => $description,
+                'contact_person' => $data['contact_person'] ?? $driver->full_name,
+                'contact_number' => $data['contact_number'] ?? $driver->contact_number,
+            ], fn ($v) => $v !== null),
         ]);
+
+        if (! empty($data['sex']) || ! empty($data['assessment_comment']) || ! empty($data['blood_pressure'])) {
+            ReportForm::query()->updateOrCreate(
+                ['emergency_report_id' => $report->getKey()],
+                [
+                    'driver_section' => [],
+                    'emergency_section' => [
+                        'timeReported' => $data['time_reported'] ?? '',
+                        'timeOfArrival' => $data['time_of_arrival'] ?? '',
+                        'date' => $data['date'] ?? now()->toDateString(),
+                        'location' => $data['location'],
+                        'patientName' => $data['patient_name'],
+                        'age' => (string) $data['patient_age'],
+                        'sex' => $data['sex'] ?? 'Male',
+                        'address' => $data['address'] ?? '',
+                        'typeOfIncident' => $data['type_of_incident'] ?? $incidentType->name,
+                        'allergies' => $data['allergies'] ?? '',
+                        'medications' => $data['medications'] ?? '',
+                        'assessmentComment' => $data['assessment_comment'] ?? '',
+                        'treatmentManagement' => $data['treatment_management'] ?? '',
+                        'vitalSigns' => [
+                            'bloodPressure' => $data['blood_pressure'] ?? '',
+                            'pulseRate' => $data['pulse_rate'] ?? '',
+                            'respiration' => $data['respiration'] ?? '',
+                        ],
+                    ],
+                ],
+            );
+        }
+
         DriverNotification::receipt($driver->id, $report, 'submitted', 'Report received');
         $report->load('incidentType:id,name,color');
         EmergencyReportUpdated::dispatch($report, null, true);
 
         return response()->json(['report' => $this->reportData($report)], 201);
+    }
+
+    public function requestBackup(Request $request, EmergencyReport $report): JsonResponse
+    {
+        /** @var DriverResponderUser $driver */
+        $driver = $request->user();
+        abort_unless($report->assigned_driver_id === $driver->getKey(), 404);
+        Gate::forUser($driver)->authorize('advanceAsDriver', $report);
+
+        $data = $request->validate([
+            'notes' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $trip = DispatchTrip::where('emergency_report_id', $report->id)->first();
+        $legacyStatus = Vehicle::where('assigned_report_id', $report->id)->value('status');
+        $responseStatus = $trip?->arrived_at
+            ? 'arrived'
+            : ($trip?->returning_at
+                ? 'returning'
+                : ($trip?->picked_up_at
+                    ? 'transporting'
+                    : ($trip?->on_scene_at
+                        ? 'on-scene'
+                        : ($trip?->started_at
+                            ? 'en-route'
+                            : ($legacyStatus ?? 'available')))));
+
+        if ($responseStatus !== 'on-scene') {
+            throw ValidationException::withMessages([
+                'response_status' => 'Backup can only be requested when the driver is on scene.',
+            ]);
+        }
+
+        $report->loadMissing(['incidentType', 'team']);
+        $teamName = $report->team?->team_name ?? $driver->full_name;
+        $notes = trim((string) ($data['notes'] ?? ''));
+        $backupDescription = "[BACKUP REQUEST for {$report->reference} by {$teamName} ({$driver->full_name})]"
+            .($notes !== '' ? " {$notes}" : '')
+            .($report->description ? " — Original incident: {$report->description}" : '');
+
+        $backupReport = EmergencyReport::query()->create([
+            'reference' => EmergencyReport::generateReference(),
+            'incident_type_id' => $report->incident_type_id,
+            'location' => $report->location,
+            'lat' => $report->lat,
+            'lng' => $report->lng,
+            'description' => Str::limit($backupDescription, 2000, ''),
+            'status' => 'pending',
+            'priority' => 'critical',
+            'source' => 'mobile-app',
+            'reporter_type' => $report->reporter_type ?? 'victim',
+            'reported_by' => $driver->getKey(),
+            'reported_by_type' => $driver->getMorphClass(),
+            'reporter_name' => "{$driver->full_name} (Backup - {$teamName})",
+            'reporter_contact' => $driver->contact_number ?: $report->reporter_contact,
+            'reported_at' => now(),
+            'victim_info' => $report->victim_info,
+            'witness_info' => $report->witness_info,
+        ]);
+
+        DriverNotification::receipt($driver->id, $backupReport, 'backup_requested', 'Backup request sent');
+        Audit::record('REQUEST_BACKUP', "Driver {$driver->full_name} requested on-scene backup ({$backupReport->reference}) for {$report->reference}");
+        $backupReport->load('incidentType:id,name,color');
+        EmergencyReportUpdated::dispatch($backupReport, null, true);
+
+        return response()->json([
+            'reference' => $backupReport->reference,
+            'message' => 'Backup request sent to dispatcher.',
+            'report' => $this->reportData($backupReport),
+        ], 201);
     }
 
     /**

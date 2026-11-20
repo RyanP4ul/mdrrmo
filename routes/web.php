@@ -86,6 +86,9 @@ Route::middleware(['auth', 'role:dispatcher'])->prefix('dispatcher')->name('disp
         ->scopeBindings()
         ->name('shifts.update');
     Route::get('map', [Dispatcher\MapController::class, 'index'])->name('map');
+    Route::resource('vehicles', Admin\VehicleController::class)->only(['index', 'store', 'update', 'destroy']);
+    Route::patch('vehicles/{vehicle}/status', [Admin\VehicleController::class, 'updateStatus'])->name('vehicles.status');
+    Route::patch('maintenance-reports/{maintenanceReport}/review', [Admin\VehicleController::class, 'reviewMaintenanceReport'])->name('maintenance-reports.review');
     Route::get('schedule', [Dispatcher\ScheduleController::class, 'index'])->name('schedule.index');
     Route::patch('schedule/{schedule}/acknowledge', [Dispatcher\ScheduleController::class, 'acknowledge'])->name('schedule.acknowledge');
     Route::patch('schedule/{schedule}/decline', [Dispatcher\ScheduleController::class, 'decline'])->name('schedule.decline');

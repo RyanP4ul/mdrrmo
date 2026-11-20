@@ -23,15 +23,23 @@ import { cn, formatDateTime } from '@/lib/utils';
 
 interface VictimInfo { name?: string | null; age?: string | number | null; sex?: string | null }
 interface WitnessInfo { statement?: string | null }
-interface Report { id: number; reference: string; status: string; priority: string; location: string; lat: number; lng: number; description: string; photo_url?: string | null; source: string; reporter_name: string; reporter_contact: string | null; incident_type_id: number; reporter_type: 'victim' | 'witness' | null; victim_info?: VictimInfo | null; witness_info?: WitnessInfo | null; reported_at: string; incident_type: { name: string; color: string }; team: { team_name: string } | null }
-interface Props { incoming: Report[]; counts: Record<string, number>; types: { id: number; name: string; priority: string }[]; autoTeam: { id: number; name: string; members: { id: number; name: string; role: string }[] } | null }
+interface TeamOption { id: number; name: string; shift_team?: 'day' | 'night' | null; vehicle_name?: string | null; members: { id: number; name: string; role: string | null }[] }
+interface Report { id: number; reference: string; status: string; priority: string; location: string; lat: number; lng: number; description: string; photo_url?: string | null; source: string; reporter_name: string; reporter_contact: string | null; incident_type_id: number; response_team_id?: number | null; reporter_type: 'victim' | 'witness' | null; victim_info?: VictimInfo | null; witness_info?: WitnessInfo | null; reported_at: string; incident_type: { name: string; color: string }; team: { team_name: string } | null }
+interface Props { incoming: Report[]; counts: Record<string, number>; types: { id: number; name: string; priority: string }[]; autoTeam: TeamOption | null; teams?: TeamOption[] }
 
-function DispatchForm({ selected, types, autoTeam, onDone }: { selected: Report | null; types: Props['types']; autoTeam: Props['autoTeam']; onDone: () => void }) {
+function DispatchForm({ selected, types, autoTeam, teams = [], onDone }: { selected: Report | null; types: Props['types']; autoTeam: Props['autoTeam']; teams?: TeamOption[]; onDone: () => void }) {
   const readOnly = selected !== null;
   const form = useForm({
-    report_id: selected?.id ?? '', incident_type_id: selected ? String(selected.incident_type_id) : '', reporter_name: selected?.reporter_name ?? '',
-    reporter_contact: selected?.reporter_contact ?? '', location: selected?.location ?? '', lat: selected?.lat ?? DEFAULT_CENTER[1], lng: selected?.lng ?? DEFAULT_CENTER[0],
-    description: selected?.description ?? '', reporter_type: (selected ? (selected.reporter_type ?? '') : 'victim') as 'victim' | 'witness' | '',
+    report_id: selected?.id ?? '',
+    team_id: selected?.response_team_id ? String(selected.response_team_id) : 'auto',
+    incident_type_id: selected ? String(selected.incident_type_id) : '',
+    reporter_name: selected?.reporter_name ?? '',
+    reporter_contact: selected?.reporter_contact ?? '',
+    location: selected?.location ?? '',
+    lat: selected?.lat ?? DEFAULT_CENTER[1],
+    lng: selected?.lng ?? DEFAULT_CENTER[0],
+    description: selected?.description ?? '',
+    reporter_type: (selected ? (selected.reporter_type ?? '') : 'victim') as 'victim' | 'witness' | '',
     victim_info: {
       name: selected?.victim_info?.name ? String(selected.victim_info.name) : '',
       age: selected?.victim_info?.age != null && selected.victim_info.age !== '' ? String(selected.victim_info.age) : '',
@@ -45,10 +53,18 @@ function DispatchForm({ selected, types, autoTeam, onDone }: { selected: Report 
   const displayValue = (value: string) => (readOnly ? value.trim() || '—' : value);
   const showVictimInfo = form.data.reporter_type === 'victim' || (readOnly && Boolean(form.data.victim_info.name || form.data.victim_info.age || form.data.victim_info.sex));
   const showWitnessInfo = form.data.reporter_type === 'witness' || (readOnly && Boolean(form.data.witness_info.statement));
+  const selectedTeamOption =
+    form.data.team_id === 'auto'
+      ? autoTeam
+      : (teams.find((t) => String(t.id) === form.data.team_id) ?? autoTeam);
+  const canDispatchTeam = Boolean(selectedTeamOption);
 
   const handleDispatch = () => {
+    const chosenTeamId = form.data.team_id === 'auto' || !form.data.team_id ? null : Number(form.data.team_id);
     if (selected) {
-      form.transform(() => ({ report_id: selected.id }));
+      form.transform(() => ({ report_id: selected.id, team_id: chosenTeamId }));
+    } else {
+      form.transform((data) => ({ ...data, team_id: chosenTeamId }));
     }
     form.post(route('dispatcher.dispatch.store'), { preserveScroll: true, onSuccess: () => { form.reset(); onDone(); } });
   };
@@ -143,13 +159,42 @@ function DispatchForm({ selected, types, autoTeam, onDone }: { selected: Report 
 
         <fieldset className="space-y-3 border-t pt-5">
           <legend className="eyebrow mb-3 pr-3">Response team</legend>
-          <div className={cn('rounded-md border p-3.5 text-sm', autoTeam ? 'border-ok/30 bg-ok-soft' : 'border-warning/30 bg-warning-soft')}>
-            <p className={cn('flex items-center gap-2 font-medium', autoTeam ? 'text-ok' : 'text-warning')}><Users className="size-4" aria-hidden="true" />{autoTeam ? `Auto-assigned: ${autoTeam.name}` : 'No team with an active linked driver/responder available'}</p>
-            {!autoTeam && <p className="mt-1.5 text-xs text-foreground/80">A team must have active members before dispatching. <Link href="/dispatcher/responders" className="font-medium text-primary underline underline-offset-2">Review response teams</Link></p>}
+          <Field label="Select response team" htmlFor="dispatch-team" hint="Choose Auto-assign or manually select an active response team.">
+            <Select value={form.data.team_id} onValueChange={(v) => form.setData('team_id', v)}>
+              <SelectTrigger id="dispatch-team" className="w-full" aria-label="Select response team">
+                <SelectValue placeholder="Choose response team" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">
+                  {autoTeam ? `Auto-assign (${autoTeam.name})` : 'Auto-assign (Recommended)'}
+                </SelectItem>
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={String(t.id)}>
+                    {t.name}
+                    {t.vehicle_name ? ` · ${t.vehicle_name}` : ''}
+                    {t.shift_team ? ` (${t.shift_team === 'night' ? 'Night' : 'Day'})` : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className={cn('rounded-md border p-3.5 text-sm', selectedTeamOption ? 'border-ok/30 bg-ok-soft' : 'border-warning/30 bg-warning-soft')}>
+            <p className={cn('flex items-center gap-2 font-medium', selectedTeamOption ? 'text-ok' : 'text-warning')}>
+              <Users className="size-4" aria-hidden="true" />
+              {selectedTeamOption
+                ? `${form.data.team_id === 'auto' ? 'Auto-assigned' : 'Selected team'}: ${selectedTeamOption.name}`
+                : 'No team with an active linked driver/responder available'}
+            </p>
+            {!selectedTeamOption && <p className="mt-1.5 text-xs text-foreground/80">A team must have active members before dispatching. <Link href="/dispatcher/responders" className="font-medium text-primary underline underline-offset-2">Review response teams</Link></p>}
             {e.team && <p role="alert" className="mt-1 text-xs font-medium text-critical">{e.team}</p>}
             {e.status && <p role="alert" className="mt-1 text-xs font-medium text-critical">{e.status}</p>}
             {e.report_id && <p role="alert" className="mt-1 text-xs font-medium text-critical">{e.report_id}</p>}
-            {autoTeam && <p className="mt-1 text-xs text-foreground/80">On shift: {autoTeam.members.map((m) => m.name).join(', ') || '—'}</p>}
+            {selectedTeamOption && (
+              <p className="mt-1 text-xs text-foreground/80">
+                Members: {selectedTeamOption.members.map((m) => `${m.name}${m.role ? ` (${m.role})` : ''}`).join(', ') || '—'}
+                {selectedTeamOption.vehicle_name ? ` · Vehicle: ${selectedTeamOption.vehicle_name}` : ''}
+              </p>
+            )}
           </div>
         </fieldset>
       </div>
@@ -157,7 +202,7 @@ function DispatchForm({ selected, types, autoTeam, onDone }: { selected: Report 
       <footer className="flex flex-wrap justify-end gap-2 rounded-b-lg border-t bg-muted/40 px-5 py-3">
         {selected && <Button type="button" variant="outline" onClick={onDone}>Cancel</Button>}
         {selected && selected.status === 'pending' && <Button type="button" variant="outline" onClick={() => router.patch(route('dispatcher.reports.invalid', selected.id), {}, { preserveScroll: true, onSuccess: onDone })}>Mark invalid</Button>}
-        <Button type="button" disabled={form.processing || !autoTeam} onClick={handleDispatch}>
+        <Button type="button" disabled={form.processing || !canDispatchTeam} onClick={handleDispatch}>
           <Radio aria-hidden="true" />{form.processing ? 'Sending dispatch…' : selected ? 'Dispatch team' : 'Create & dispatch'}
         </Button>
       </footer>
@@ -165,7 +210,7 @@ function DispatchForm({ selected, types, autoTeam, onDone }: { selected: Report 
   );
 }
 
-export default function Dashboard({ incoming, counts, types, autoTeam }: Props) {
+export default function Dashboard({ incoming, counts, types, autoTeam, teams = [] }: Props) {
   const [selId, setSelId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [pendingOnly, setPendingOnly] = useState(false);
@@ -181,7 +226,7 @@ export default function Dashboard({ incoming, counts, types, autoTeam }: Props) 
   return (
     <AppLayout>
       <Head title="Dispatch Operations" />
-      <DispatchReportRealtime reloadProps={['incoming', 'counts', 'autoTeam']} />
+      <DispatchReportRealtime reloadProps={['incoming', 'counts', 'autoTeam', 'teams']} />
       <PageHeader title="Dispatch operations" description="Review incoming incidents and coordinate your next response." />
 
       <StatGroup>
@@ -230,7 +275,7 @@ export default function Dashboard({ incoming, counts, types, autoTeam }: Props) 
         </section>
 
         <div id="dispatch-form-panel" ref={formPanel} tabIndex={-1} className="scroll-mt-16 outline-none">
-          <DispatchForm key={selected?.id ?? 'new'} selected={selected} types={types} autoTeam={autoTeam} onDone={() => setSelId(null)} />
+          <DispatchForm key={selected?.id ?? 'new'} selected={selected} types={types} autoTeam={autoTeam} teams={teams} onDone={() => setSelId(null)} />
         </div>
       </div>
     </AppLayout>

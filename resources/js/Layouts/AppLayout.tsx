@@ -31,7 +31,6 @@ const NAV: Record<Role, Group[]> = {
     { label: 'Management', items: [
       { label: 'Users', href: '/admin/users', icon: Users },
       { label: 'Response Teams', href: '/admin/response-teams', icon: Shield },
-      { label: 'Vehicle Management', href: '/admin/vehicles', icon: Truck },
       { label: 'Incident Types', href: '/admin/incident-types', icon: AlertTriangle },
       { label: 'Archives', href: '/admin/archives', icon: Archive },
     ] },
@@ -44,6 +43,7 @@ const NAV: Record<Role, Group[]> = {
     ] },
     { label: 'Coordination', items: [
       { label: 'Responders', href: '/dispatcher/responders', icon: Shield },
+      { label: 'Vehicle Management', href: '/dispatcher/vehicles', icon: Truck },
       { label: 'Schedule', href: '/dispatcher/schedule', icon: CalendarDays },
     ] },
   ],

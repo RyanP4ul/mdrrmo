@@ -12,7 +12,7 @@ class Vehicle extends Model
 {
     use Archivable;
 
-    public const TYPES = ['ambulance', 'fire-truck', 'rescue-van', 'police-car', 'utility-truck'];
+    public const TYPES = ['rescue-truck', 'ambulance', 'tow-truck'];
 
     public const STATUSES = ['en-route', 'on-scene', 'available', 'returning', 'offline', 'maintenance'];
 

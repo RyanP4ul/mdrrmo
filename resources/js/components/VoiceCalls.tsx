@@ -355,7 +355,7 @@ export function VoiceCalls({ user, children }: { user: AuthUser; children: React
           aria-controls="voice-calls-panel"
           onClick={() => setPanelCollapsed(false)}
           className={cn(
-            'fixed right-4 bottom-4 z-50 h-11 gap-2 rounded-full px-4 shadow-xl max-lg:bottom-[4.5rem]',
+            'fixed left-4 bottom-4 z-50 h-11 gap-2 rounded-full px-4 shadow-xl max-lg:bottom-[4.5rem] lg:left-[15.5rem]',
             hasSosActivity || incoming.length > 0
               ? 'bg-[#b42318] text-white ring-4 ring-[#b42318]/25 hover:bg-[#991b1b]'
               : active
@@ -403,7 +403,7 @@ export function VoiceCalls({ user, children }: { user: AuthUser; children: React
           aria-label="Voice calls"
           aria-live="polite"
           className={cn(
-            'fixed right-4 bottom-4 z-50 flex max-h-[72dvh] w-[calc(100%-2rem)] max-w-sm flex-col overflow-hidden rounded-xl border bg-popover shadow-2xl max-lg:bottom-[4.5rem]',
+            'fixed left-4 bottom-4 z-50 flex max-h-[72dvh] w-[calc(100%-2rem)] max-w-sm flex-col overflow-hidden rounded-xl border bg-popover shadow-2xl max-lg:bottom-[4.5rem] lg:left-[15.5rem]',
             hasSosActivity ? 'border-[#b42318]/60 ring-2 ring-[#b42318]/15' : 'border-border',
           )}
         >

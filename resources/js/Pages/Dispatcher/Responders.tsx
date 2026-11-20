@@ -23,8 +23,9 @@ import type { Paginated } from '@/types';
 type ShiftTeamType = 'day' | 'night';
 interface Member { id?: number; user_id?: number | null; name: string; role: string | null; status?: string }
 interface Driver { id: number; name: string; shift_team?: ShiftTeamType | null }
+interface VehicleOption { id: number; name: string; plate_number: string; vehicle_type: string; status: string; response_team_id?: number | null; team_name?: string | null }
 interface Shift { id: number; start_time: string; end_time: string; status: string; members: Member[] }
-interface Team { id: number; team_name: string; status: string; shift_team?: ShiftTeamType | null; vehicle_name?: string | null; members: Member[]; shifts: Shift[] }
+interface Team { id: number; team_name: string; status: string; shift_team?: ShiftTeamType | null; vehicle_id?: number | null; vehicle_name?: string | null; vehicle_plate?: string | null; vehicle_type?: string | null; driver_user_id?: number | null; members: Member[]; shifts: Shift[] }
 interface ShiftView { active: ShiftTeamType; dispatcherShift: ShiftTeamType | null; canEdit: boolean }
 interface RosterMember { id: number; name: string; status?: string; shift_team?: ShiftTeamType | null; assignment_type: 'paired' | 'solo' | 'unassigned'; role: string | null; team_names: string[] }
 interface ShiftRoster {
@@ -51,6 +52,7 @@ export default function Responders({
   teams,
   filters,
   drivers,
+  vehicles = [],
   shiftView,
   shiftRoster,
   allMembers = [],
@@ -58,23 +60,33 @@ export default function Responders({
   teams: Paginated<Team>;
   filters: Record<string, string>;
   drivers: Driver[];
+  vehicles?: VehicleOption[];
   shiftView: ShiftView;
   shiftRoster: ShiftRoster;
   allMembers?: RosterMember[];
 }) {
   const { values, set } = useServerFilters(
     { search: filters.search ?? '', status: filters.status ?? '', shift: shiftView.active },
-    ['teams', 'shiftRoster', 'allMembers', 'shiftView'],
+    ['teams', 'shiftRoster', 'allMembers', 'shiftView', 'vehicles'],
   );
   const [editing, setEditing] = useState<Team | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [del, setDel] = useState<Team | null>(null);
 
-  const form = useForm<{ team_name: string; status: string; shift_team: ShiftTeamType; members: Member[] }>({
+  const form = useForm<{
+    team_name: string;
+    status: string;
+    shift_team: ShiftTeamType;
+    vehicle_id: string;
+    driver_user_id: number | null;
+    members: Member[];
+  }>({
     team_name: '',
     status: 'active',
     shift_team: shiftView.active,
-    members: [{ name: '', role: 'Responder' }],
+    vehicle_id: 'none',
+    driver_user_id: null,
+    members: [{ name: '', role: 'Driver' }],
   });
   const err = form.errors as Record<string, string>;
   const assignedToTeamIds = new Set(
@@ -93,27 +105,60 @@ export default function Responders({
   const openForm = (t?: Team) => {
     setEditing(t ?? null);
     form.clearErrors();
-    form.setData(
-      t
-        ? {
-            team_name: t.team_name,
-            status: t.status,
-            shift_team: t.shift_team ?? shiftView.active,
-            members: t.members.map((m) => ({ ...m })),
-          }
-        : {
-            team_name: '',
-            status: 'active',
-            shift_team: shiftView.active,
-            members: [{ name: '', role: 'Responder' }],
-          },
-    );
+    if (t) {
+      const existingDriverMember =
+        t.members.find((m) => m.role?.toLowerCase() === 'driver') ?? t.members[0];
+      const driverUserId = t.driver_user_id ?? existingDriverMember?.user_id ?? null;
+      form.setData({
+        team_name: t.team_name,
+        status: t.status,
+        shift_team: t.shift_team ?? shiftView.active,
+        vehicle_id: t.vehicle_id ? String(t.vehicle_id) : 'none',
+        driver_user_id: driverUserId,
+        members: t.members.map((m) => ({
+          ...m,
+          role: driverUserId != null && m.user_id === driverUserId ? 'Driver' : 'Responder',
+        })),
+      });
+    } else {
+      form.setData({
+        team_name: '',
+        status: 'active',
+        shift_team: shiftView.active,
+        vehicle_id: 'none',
+        driver_user_id: null,
+        members: [{ name: '', role: 'Driver' }],
+      });
+    }
     setFormOpen(true);
   };
-  const setMember = (i: number, patch: Partial<Member>) =>
-    form.setData('members', form.data.members.map((m, j) => (j === i ? { ...m, ...patch } : m)));
+  const setMember = (i: number, patch: Partial<Member>) => {
+    const nextMembers = form.data.members.map((m, j) => (j === i ? { ...m, ...patch } : m));
+    // Enforce only one Driver allowed per team
+    if (patch.role === 'Driver') {
+      for (let j = 0; j < nextMembers.length; j++) {
+        if (j !== i && nextMembers[j].role === 'Driver') {
+          nextMembers[j] = { ...nextMembers[j], role: 'Responder' };
+        }
+      }
+    }
+    const driverMember = nextMembers.find((m) => m.role === 'Driver');
+    form.setData((prev) => ({
+      ...prev,
+      members: nextMembers,
+      driver_user_id: driverMember?.user_id ?? null,
+    }));
+  };
   const save = () => {
     const o = { preserveScroll: true, onSuccess: () => setFormOpen(false) };
+    form.transform((data) => {
+      const driverMember = data.members.find((m) => m.role === 'Driver');
+      return {
+        ...data,
+        vehicle_id: data.vehicle_id === 'none' || !data.vehicle_id ? null : Number(data.vehicle_id),
+        driver_user_id: driverMember?.user_id ?? null,
+      };
+    });
     editing ? form.put(route('dispatcher.responders.update', editing.id), o) : form.post(route('dispatcher.responders.store'), o);
   };
 
@@ -237,10 +282,18 @@ export default function Responders({
                         ) : (
                           <ul className="divide-y rounded-md border bg-background">
                             {t.members.map((m) => {
-                              const isDriver = m.role?.toLowerCase().includes('driver');
+                              const isDriver = m.role?.toLowerCase() === 'driver';
                               return (
                                 <li key={m.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                                  <span className="truncate font-medium text-foreground">{m.name}</span>
+                                  <div className="min-w-0">
+                                    <span className="truncate font-medium text-foreground">{m.name}</span>
+                                    {isDriver && t.vehicle_name && (
+                                      <span className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                        <Truck className="size-3 text-primary" />
+                                        {t.vehicle_name}
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="flex shrink-0 items-center gap-2">
                                     {m.role && (
                                       <span
@@ -390,14 +443,46 @@ export default function Responders({
               </Select>
             </div>
 
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="team-vehicle">Assigned vehicle (Team Driver)</Label>
+              <Select value={form.data.vehicle_id} onValueChange={(v) => form.setData('vehicle_id', v)}>
+                <SelectTrigger id="team-vehicle" className="w-full" aria-label="Assigned vehicle">
+                  <SelectValue placeholder="Unassigned" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Unassigned</SelectItem>
+                  {vehicles.map((v) => {
+                    const isMaintenance = v.status === 'maintenance';
+                    const otherTeam = v.response_team_id && v.response_team_id !== editing?.id ? v.team_name : null;
+                    return (
+                      <SelectItem key={v.id} value={String(v.id)} disabled={isMaintenance}>
+                        {v.plate_number} · {v.name} ({v.vehicle_type.replace('-', ' ')})
+                        {isMaintenance ? ' — Under Maintenance' : otherTeam ? ` — Assigned to ${otherTeam}` : ''}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+              {err.vehicle_id && <p className="text-xs text-destructive">{err.vehicle_id}</p>}
+            </div>
+
             <div className="space-y-2 sm:col-span-2">
               <div className="flex items-center justify-between gap-2">
-                <Label>Members</Label>
+                <div>
+                  <Label>Members &amp; Roles</Label>
+                  <p className="text-[11px] text-muted-foreground">Only one Driver is allowed per team.</p>
+                </div>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => form.setData('members', [...form.data.members, { name: '', role: 'Responder' }])}
+                  onClick={() => {
+                    const hasDriver = form.data.members.some((m) => m.role === 'Driver');
+                    form.setData('members', [
+                      ...form.data.members,
+                      { name: '', role: hasDriver ? 'Responder' : 'Driver' },
+                    ]);
+                  }}
                 >
                   <Plus className="mr-1 size-3" />
                   Add member
@@ -412,15 +497,21 @@ export default function Responders({
                     }
                     return !assignedToTeamIds.has(driver.id);
                   });
+                  const anotherMemberIsDriver = form.data.members.some(
+                    (member, index) => index !== i && member.role === 'Driver',
+                  );
 
                   return (
                     <div key={i} className="space-y-1">
-                      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                      <div className="grid grid-cols-[minmax(0,1fr)_8.5rem_auto] items-center gap-2">
                         <Select
                           value={m.user_id ? String(m.user_id) : ''}
                           onValueChange={(value) => {
                             const driver = drivers.find((d) => d.id === Number(value));
-                            if (driver) setMember(i, { user_id: driver.id, name: driver.name, role: 'Driver/Responder' });
+                            if (driver) {
+                              const role = m.role === 'Driver' || (!anotherMemberIsDriver && i === 0) ? 'Driver' : 'Responder';
+                              setMember(i, { user_id: driver.id, name: driver.name, role });
+                            }
                           }}
                         >
                           <SelectTrigger
@@ -445,13 +536,38 @@ export default function Responders({
                             )}
                           </SelectContent>
                         </Select>
+                        <Select
+                          value={m.role === 'Driver' ? 'Driver' : 'Responder'}
+                          onValueChange={(role) => setMember(i, { role })}
+                        >
+                          <SelectTrigger aria-label={`Member ${i + 1} role`} className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Driver" disabled={anotherMemberIsDriver}>
+                              Driver{anotherMemberIsDriver ? ' (Taken)' : ''}
+                            </SelectItem>
+                            <SelectItem value="Responder">Responder</SelectItem>
+                          </SelectContent>
+                        </Select>
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
                           aria-label="Remove member"
                           disabled={form.data.members.length === 1}
-                          onClick={() => form.setData('members', form.data.members.filter((_, j) => j !== i))}
+                          onClick={() => {
+                            const remaining = form.data.members.filter((_, j) => j !== i);
+                            if (!remaining.some((item) => item.role === 'Driver') && remaining.length > 0) {
+                              remaining[0] = { ...remaining[0], role: 'Driver' };
+                            }
+                            const driverMember = remaining.find((item) => item.role === 'Driver');
+                            form.setData((prev) => ({
+                              ...prev,
+                              members: remaining,
+                              driver_user_id: driverMember?.user_id ?? null,
+                            }));
+                          }}
                         >
                           <X className="size-4" />
                         </Button>
@@ -461,6 +577,7 @@ export default function Responders({
                   );
                 })}
               </div>
+              {err.driver_user_id && <p className="text-xs text-destructive">{err.driver_user_id}</p>}
               {drivers.length > 0 && !editing && drivers.every((d) => assignedToTeamIds.has(d.id)) && (
                 <p className="text-xs text-muted-foreground">
                   All drivers and responders are already assigned to a team.

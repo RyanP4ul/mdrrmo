@@ -85,6 +85,12 @@ interface Props {
     employees: Paginated<U>;
     residents: Paginated<U>;
     filters: Record<string, string>;
+    counts?: {
+        employees_active: number;
+        employees_inactive: number;
+        residents_active: number;
+        residents_inactive: number;
+    };
 }
 
 const computeAge = (dob?: string | null): number | null => {
@@ -115,19 +121,20 @@ const blank = {
     city: "Meycauayan",
     province: "Bulacan",
 };
-export default function Index({ employees, residents, filters }: Props) {
+export default function Index({ employees, residents, filters, counts }: Props) {
     const { values, set } = useServerFilters(
         {
             emp_search: filters.emp_search ?? "",
             role: filters.role ?? "",
-            status: filters.status ?? "",
+            status: filters.status ?? "active",
             res_search: filters.res_search ?? "",
             reg: filters.reg ?? "",
+            res_status: filters.res_status ?? "active",
         },
-        ["employees", "residents"],
+        ["employees", "residents", "counts", "filters"],
     );
     const [tab, setTab] = useState<string>(() => {
-        if (filters.res_search || filters.reg) return "residents";
+        if (filters.res_search || filters.reg || (filters.res_status && filters.res_status !== "active")) return "residents";
         if (typeof window !== "undefined") {
             const params = new URLSearchParams(window.location.search);
             if (params.has("res_page")) return "residents";
@@ -212,6 +219,22 @@ export default function Index({ employees, residents, filters }: Props) {
                 </TabsList>
 
                 <TabsContent value="employees" className="space-y-4">
+                    <Tabs
+                        value={values.status === "inactive" ? "inactive" : "active"}
+                        onValueChange={(nextStatus) => set("status", nextStatus)}
+                    >
+                        <TabsList aria-label="Employee status tabs">
+                            <TabsTrigger value="active">
+                                <UserCheck className="mr-1.5 size-3.5" />
+                                Active ({counts?.employees_active ?? (values.status !== "inactive" ? employees.total : 0)})
+                            </TabsTrigger>
+                            <TabsTrigger value="inactive">
+                                <UserX className="mr-1.5 size-3.5" />
+                                Inactive ({counts?.employees_inactive ?? (values.status === "inactive" ? employees.total : 0)})
+                            </TabsTrigger>
+                        </TabsList>
+                    </Tabs>
+
                     <FilterBar
                         search={values.emp_search}
                         onSearch={(v) => set("emp_search", v)}
@@ -226,14 +249,6 @@ export default function Index({ employees, residents, filters }: Props) {
                                 "dispatcher",
                                 "driver/responder",
                             ].map((r) => ({ value: r, label: r }))}
-                        />
-                        <FilterSelect
-                            label="Status"
-                            value={values.status}
-                            onChange={pick("status")}
-                            options={["active", "inactive", "suspended"].map(
-                                (r) => ({ value: r, label: r }),
-                            )}
                         />
                         <Button onClick={() => openForm()}>
                             <Plus className="mr-1 size-4" />
@@ -356,6 +371,22 @@ export default function Index({ employees, residents, filters }: Props) {
                 </TabsContent>
 
                 <TabsContent value="residents" className="space-y-4">
+                    <Tabs
+                        value={values.res_status === "inactive" ? "inactive" : "active"}
+                        onValueChange={(nextStatus) => set("res_status", nextStatus)}
+                    >
+                        <TabsList aria-label="Resident status tabs">
+                            <TabsTrigger value="active">
+                                <UserCheck className="mr-1.5 size-3.5" />
+                                Active ({counts?.residents_active ?? (values.res_status !== "inactive" ? residents.total : 0)})
+                            </TabsTrigger>
+                            <TabsTrigger value="inactive">
+                                <UserX className="mr-1.5 size-3.5" />
+                                Inactive ({counts?.residents_inactive ?? (values.res_status === "inactive" ? residents.total : 0)})
+                            </TabsTrigger>
+                        </TabsList>
+                    </Tabs>
+
                     <FilterBar
                         search={values.res_search}
                         onSearch={(v) => set("res_search", v)}

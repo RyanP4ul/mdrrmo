@@ -18,7 +18,6 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
 import { DispatchReportRealtime, type ReportUpdatedEvent } from '@/components/DispatchReportRealtime';
-import { StartVoiceCall } from '@/components/VoiceCalls';
 import { StatusBadge } from '@/components/StatusBadge';
 import { GoogleLocationMap } from '@/components/maps/GoogleLocationMap';
 import { Button } from '@/components/ui/button';
@@ -27,13 +26,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { cn, formatDateTime } from '@/lib/utils';
 import type { DispatchTeam, EmergencyReport, HospitalRecommendation } from '@/types/website';
 
-const Row = ({ k, v }: { k: string; v?: string | null }) =>
-  v ? (
+const Row = ({ k, v, always = false }: { k: string; v?: string | number | null; always?: boolean }) => {
+  const display = v !== null && v !== undefined && String(v).trim() !== '' ? String(v) : null;
+  if (!display && !always) return null;
+  return (
     <div className="flex justify-between gap-4 py-2 text-sm">
       <dt className="text-muted-foreground">{k}</dt>
-      <dd className="text-right font-medium">{v}</dd>
+      <dd className="text-right font-medium">{display ?? '—'}</dd>
     </div>
-  ) : null;
+  );
+};
 
 function formatLiter(value: number | string | null | undefined): string | null {
   if (value == null || value === '') return null;
@@ -91,6 +93,16 @@ export default function Show({
         (v) => v !== null && v !== '' && (typeof v !== 'object' || Object.values(v ?? {}).some(Boolean)),
       ),
   );
+  const e = f?.emergency_section ?? {};
+  const victim = (r.victim_info ?? {}) as Record<string, unknown>;
+  const pickVal = (...candidates: unknown[]): string | null => {
+    for (const c of candidates) {
+      if (c !== null && c !== undefined && String(c).trim() !== '') {
+        return String(c).trim();
+      }
+    }
+    return null;
+  };
   const hasDriverSection = Boolean(
     f && Object.values(f.driver_section ?? {}).some((v) => v !== null && v !== ''),
   );
@@ -163,21 +175,14 @@ export default function Show({
             </p>
           </div>
 
-          {open && (
+          {open && r.status === 'pending' && (
             <div className="flex flex-wrap items-center gap-2">
-              <StartVoiceCall reportId={r.id} />
-              {r.status === 'pending' && (
-                <Button
-                  variant="outline"
-                  onClick={() => router.patch(route('dispatcher.reports.acknowledge', r.id), {}, { preserveScroll: true })}
-                >
-                  <Check aria-hidden="true" />
-                  Acknowledge
-                </Button>
-              )}
-              <Button onClick={dispatchSelectedTeam}>
-                <Radio aria-hidden="true" />
-                {team?.assigned ? 'Re-assign team' : 'Dispatch team'}
+              <Button
+                variant="outline"
+                onClick={() => router.patch(route('dispatcher.reports.acknowledge', r.id), {}, { preserveScroll: true })}
+              >
+                <Check aria-hidden="true" />
+                Acknowledge
               </Button>
             </div>
           )}
@@ -487,54 +492,50 @@ export default function Show({
           </Card>
         </div>
 
-        {hasEmergencySection && f && (
+        {(hasEmergencySection || hasVictimInfo) && (
           <Card className="lg:col-span-12">
             <CardHeader>
-              <CardTitle>Emergency / Patient Care Report</CardTitle>
+              <CardTitle>Emergency Report</CardTitle>
               <CardDescription>Clinical assessment and vitals submitted from the field.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {(f.emergency_section?.vitalSigns?.bloodPressure ||
-                f.emergency_section?.vitalSigns?.pulseRate ||
-                f.emergency_section?.vitalSigns?.respiration) && (
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
-                    <p className="eyebrow">Blood pressure</p>
-                    <p className="mt-0.5 text-base font-semibold tabular-nums">
-                      {f.emergency_section?.vitalSigns?.bloodPressure || '—'}
-                    </p>
-                  </div>
-                  <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
-                    <p className="eyebrow">Pulse rate</p>
-                    <p className="mt-0.5 text-base font-semibold tabular-nums">
-                      {f.emergency_section?.vitalSigns?.pulseRate || '—'}
-                    </p>
-                  </div>
-                  <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
-                    <p className="eyebrow">Respiration</p>
-                    <p className="mt-0.5 text-base font-semibold tabular-nums">
-                      {f.emergency_section?.vitalSigns?.respiration || '—'}
-                    </p>
-                  </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
+                  <p className="eyebrow">Blood Pressure</p>
+                  <p className="mt-0.5 text-base font-semibold tabular-nums">
+                    {pickVal(e.vitalSigns?.bloodPressure, victim.blood_pressure) || '—'}
+                  </p>
                 </div>
-              )}
+                <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
+                  <p className="eyebrow">Pulse Rate (BPM)</p>
+                  <p className="mt-0.5 text-base font-semibold tabular-nums">
+                    {pickVal(e.vitalSigns?.pulseRate, victim.pulse_rate) || '—'}
+                  </p>
+                </div>
+                <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
+                  <p className="eyebrow">Respiration (BPM)</p>
+                  <p className="mt-0.5 text-base font-semibold tabular-nums">
+                    {pickVal(e.vitalSigns?.respiration, victim.respiration) || '—'}
+                  </p>
+                </div>
+              </div>
               <div className="grid gap-x-10 gap-y-4 sm:grid-cols-2">
                 <dl className="divide-y">
-                  <Row k="Patient" v={f.emergency_section?.patientName} />
-                  <Row
-                    k="Age / sex"
-                    v={[f.emergency_section?.age, f.emergency_section?.sex].filter(Boolean).join(' · ') || null}
-                  />
-                  <Row k="Address" v={f.emergency_section?.address} />
-                  <Row k="Incident" v={f.emergency_section?.typeOfIncident} />
-                  <Row k="Time reported" v={f.emergency_section?.timeReported} />
-                  <Row k="Time of arrival" v={f.emergency_section?.timeOfArrival} />
+                  <Row k="Time Reported" v={pickVal(e.timeReported, victim.time_reported, r.reported_at ? formatDateTime(r.reported_at) : null)} always />
+                  <Row k="Time of arrival on scene" v={pickVal(e.timeOfArrival, victim.time_of_arrival)} always />
+                  <Row k="Date" v={pickVal(e.date, victim.date, r.reported_at ? r.reported_at.slice(0, 10) : null)} always />
+                  <Row k="Location" v={pickVal(e.location, r.location)} always />
+                  <Row k="Name of Patient" v={pickVal(e.patientName, victim.name)} always />
+                  <Row k="Age" v={pickVal(e.age, victim.age)} always />
+                  <Row k="Sex" v={pickVal(e.sex, victim.sex)} always />
+                  <Row k="Address" v={pickVal(e.address, victim.address)} always />
+                  <Row k="Type of incident" v={pickVal(e.typeOfIncident, victim.type_of_incident, r.incident_type?.name)} always />
                 </dl>
                 <dl className="divide-y">
-                  <Row k="Allergies" v={f.emergency_section?.allergies} />
-                  <Row k="Medications" v={f.emergency_section?.medications} />
-                  <Row k="Assessment" v={f.emergency_section?.assessmentComment} />
-                  <Row k="Treatment" v={f.emergency_section?.treatmentManagement} />
+                  <Row k="Allergies" v={pickVal(e.allergies, victim.allergies)} always />
+                  <Row k="Medication" v={pickVal(e.medications, victim.medications)} always />
+                  <Row k="Assessment / Comment" v={pickVal(e.assessmentComment, victim.assessment_comment, victim.symptoms)} always />
+                  <Row k="Treatment / Management" v={pickVal(e.treatmentManagement, victim.treatment_management)} always />
                 </dl>
               </div>
             </CardContent>

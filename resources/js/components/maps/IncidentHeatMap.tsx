@@ -11,7 +11,9 @@ import {
   type GoogleMarkerInstance,
 } from '@/lib/google-maps';
 import { cn } from '@/lib/utils';
-import { DEFAULT_CENTER, DEFAULT_ZOOM } from './constants';
+import { BALAGTAS_LAT, BALAGTAS_LNG, DEFAULT_ZOOM } from './constants';
+
+const BALAGTAS_CENTER = { lat: BALAGTAS_LAT, lng: BALAGTAS_LNG };
 
 export interface HeatPoint {
   lat: number;
@@ -92,13 +94,20 @@ export default function IncidentHeatMap({
     [points],
   );
 
+  const centerOnBalagtas = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.setCenter(BALAGTAS_CENTER);
+    map.setZoom(DEFAULT_ZOOM);
+  }, []);
+
   const framePoints = useCallback(() => {
     const maps = mapsRef.current;
     const map = mapRef.current;
     if (!maps || !map) return;
 
     if (validPoints.length === 0) {
-      map.setCenter({ lat: DEFAULT_CENTER[1], lng: DEFAULT_CENTER[0] });
+      map.setCenter(BALAGTAS_CENTER);
       map.setZoom(DEFAULT_ZOOM);
       return;
     }
@@ -142,7 +151,7 @@ export default function IncidentHeatMap({
         mapsRef.current = maps;
         if (!mapRef.current) {
           mapRef.current = new maps.Map(containerRef.current, {
-            center: { lat: DEFAULT_CENTER[1], lng: DEFAULT_CENTER[0] },
+            center: BALAGTAS_CENTER,
             zoom: DEFAULT_ZOOM,
             mapTypeControl: false,
             streetViewControl: false,
@@ -201,8 +210,8 @@ export default function IncidentHeatMap({
       markersRef.current.push(marker);
     });
 
-    framePoints();
-  }, [validPoints, ready, framePoints, idPrefix]);
+    centerOnBalagtas();
+  }, [validPoints, ready, centerOnBalagtas, idPrefix]);
 
   return (
     <div
@@ -230,6 +239,17 @@ export default function IncidentHeatMap({
 
       {!loadError && (
         <div className="pointer-events-none absolute right-3 top-3 z-20 flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={centerOnBalagtas}
+            className="pointer-events-auto border bg-card/95 text-foreground shadow-sm backdrop-blur-sm hover:bg-card"
+            aria-label="Center heat map on Balagtas"
+          >
+            <LocateFixed className="size-4" aria-hidden="true" />
+            Balagtas
+          </Button>
           {validPoints.length > 0 && (
             <Button
               type="button"
@@ -239,7 +259,6 @@ export default function IncidentHeatMap({
               className="pointer-events-auto border bg-card/95 text-foreground shadow-sm backdrop-blur-sm hover:bg-card"
               aria-label="Fit heat map bounds"
             >
-              <LocateFixed className="size-4" aria-hidden="true" />
               Fit view
             </Button>
           )}

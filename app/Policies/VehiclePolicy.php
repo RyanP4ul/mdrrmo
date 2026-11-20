@@ -10,7 +10,7 @@ class VehiclePolicy
 {
     public function update(User $user, Vehicle $vehicle): bool
     {
-        if ($user->hasRole('admin')) {
+        if ($user->hasRole('admin', 'dispatcher')) {
             return true;
         }
 

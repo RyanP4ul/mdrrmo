@@ -25,15 +25,27 @@ class UserController extends Controller
 {
     public function index(Request $request): Response
     {
-        $filters = $request->only('emp_search', 'role', 'status', 'res_search', 'reg');
-        $employeeRows = $this->employeeAccounts()
+        $filters = $request->only('emp_search', 'role', 'status', 'res_search', 'reg', 'res_status');
+        $empStatus = in_array($filters['status'] ?? null, ['active', 'inactive', 'suspended', 'all'], true)
+            ? $filters['status']
+            : 'active';
+        $resStatus = in_array($filters['res_status'] ?? null, ['active', 'inactive', 'all'], true)
+            ? $filters['res_status']
+            : 'active';
+
+        $employeeBase = $this->employeeAccounts()
             ->when($filters['role'] ?? null, fn (Builder $query, string $role) => $query->where('role', $role))
-            ->when($filters['status'] ?? null, fn (Builder $query, string $status) => $query->where('status', $status))
             ->when($filters['emp_search'] ?? null, fn (Builder $query, string $search) => $query->where(function (Builder $query) use ($search): void {
                 $query->where('first_name', 'like', "%{$search}%")
                     ->orWhere('last_name', 'like', "%{$search}%")
                     ->orWhere('contact_number', 'like', "%{$search}%")->orWhere('phone_number', 'like', "%{$search}%");
-            }))
+            }));
+
+        $empActiveCount = (clone $employeeBase)->where('status', 'active')->count();
+        $empInactiveCount = (clone $employeeBase)->where('status', 'inactive')->count();
+
+        $employeeRows = (clone $employeeBase)
+            ->when($empStatus !== 'all', fn (Builder $query) => $query->where('status', $empStatus))
             ->orderBy('last_name')
             ->orderBy('id')
             ->paginate(8, ['*'], 'emp_page')
@@ -46,20 +58,35 @@ class UserController extends Controller
                 return $data;
             });
 
-        $residents = ResidentUser::query()
+        $residentBase = ResidentUser::query()
             ->withCount(['reports', 'schedules'])
             ->when($filters['res_search'] ?? null, fn ($query, string $search) => $query->where(fn ($query) => $query
                 ->where('first_name', 'like', "%{$search}%")
                 ->orWhere('last_name', 'like', "%{$search}%")
                 ->orWhere('contact_number', 'like', "%{$search}%")
                 ->orWhere('barangay', 'like', "%{$search}%")))
-            ->when($filters['reg'] ?? null, fn ($query, string $status) => $query->where('registration_status', $status))
+            ->when($filters['reg'] ?? null, fn ($query, string $status) => $query->where('registration_status', $status));
+
+        $resActiveCount = (clone $residentBase)->where('status', 'active')->count();
+        $resInactiveCount = (clone $residentBase)->where('status', 'inactive')->count();
+
+        $residents = (clone $residentBase)
+            ->when($resStatus !== 'all' && empty($filters['reg']), fn ($query) => $query->where('status', $resStatus))
             ->latest()
             ->paginate(8, ['*'], 'res_page')
             ->withQueryString();
 
         return Inertia::render('Admin/Users/Index', [
-            'filters' => $filters,
+            'filters' => array_merge($filters, [
+                'status' => $empStatus,
+                'res_status' => $resStatus,
+            ]),
+            'counts' => [
+                'employees_active' => $empActiveCount,
+                'employees_inactive' => $empInactiveCount,
+                'residents_active' => $resActiveCount,
+                'residents_inactive' => $resInactiveCount,
+            ],
             'employees' => $employeeRows,
             'residents' => $residents->through(function (ResidentUser $resident): array {
                 $accountKey = Account::keyFor($resident);

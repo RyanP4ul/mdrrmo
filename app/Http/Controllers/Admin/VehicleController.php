@@ -110,7 +110,7 @@ class VehicleController extends Controller
             $previousTeamId = $locked->response_team_id;
             $locked->update($data);
 
-            if ($previousTeamId && $previousTeamId !== $locked->response_team_id) {
+            if (array_key_exists('response_team_id', $data) && $previousTeamId && $previousTeamId !== $locked->response_team_id) {
                 $oldTeam = ResponseTeam::query()->lockForUpdate()->find($previousTeamId);
                 if ($oldTeam && $oldTeam->active_vehicle_id === $locked->id) {
                     $fallback = Vehicle::query()
@@ -215,11 +215,17 @@ class VehicleController extends Controller
 
     private function validated(Request $request, ?Vehicle $vehicle = null): array
     {
+        if ($request->filled('vehicle_type')) {
+            $request->merge([
+                'vehicle_type' => str_replace([' ', '_'], '-', strtolower(trim((string) $request->input('vehicle_type')))),
+            ]);
+        }
+
         $data = $request->validate([
             'name' => ['nullable', 'string', 'max:120'],
             'plate_number' => ['required', 'string', 'max:40', Rule::unique('vehicles', 'plate_number')->ignore($vehicle)],
             'vehicle_type' => ['required', Rule::in(Vehicle::TYPES)],
-            'response_team_id' => ['nullable', 'integer', 'exists:response_teams,id'],
+            'response_team_id' => ['sometimes', 'nullable', 'integer', 'exists:response_teams,id'],
             'status' => ['required', Rule::in(['available', 'offline', 'maintenance'])],
             'maintenance_warning' => ['nullable', 'string', 'max:500'],
             'photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],

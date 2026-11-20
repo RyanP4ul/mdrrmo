@@ -1,4 +1,4 @@
-import { Head, router, useForm } from '@inertiajs/react';
+import { Head, router, useForm, usePage } from '@inertiajs/react';
 import { route } from 'ziggy-js';
 import { CheckCircle2, ClipboardCheck, Pencil, Plus, Trash2, Truck, Wrench } from 'lucide-react';
 import { useState } from 'react';
@@ -20,7 +20,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useServerFilters } from '@/hooks/useServerFilters';
 import { formatDateTime } from '@/lib/utils';
-import type { Paginated } from '@/types';
+import type { PageProps, Paginated } from '@/types';
 import type { MaintenanceReportItem, TeamVehicle } from '@/types/website';
 
 interface AdminVehicle extends TeamVehicle {
@@ -36,11 +36,9 @@ interface TeamOption {
 }
 
 const VEHICLE_TYPES = [
+  { value: 'rescue-truck', label: 'Rescue truck' },
   { value: 'ambulance', label: 'Ambulance' },
-  { value: 'fire-truck', label: 'Fire Truck' },
-  { value: 'rescue-van', label: 'Rescue Van' },
-  { value: 'police-car', label: 'Police Car' },
-  { value: 'utility-truck', label: 'Utility Truck' },
+  { value: 'tow-truck', label: 'Tow truck' },
 ];
 
 const VEHICLE_STATUSES = [
@@ -63,13 +61,12 @@ const REPORT_STATUSES = [
 export default function VehiclesIndex({
   vehicles,
   maintenanceReports,
-  teams,
   filters,
   stats,
 }: {
   vehicles: Paginated<AdminVehicle>;
   maintenanceReports: Paginated<MaintenanceReportItem>;
-  teams: TeamOption[];
+  teams?: TeamOption[];
   filters: Record<string, string>;
   stats: {
     total_vehicles: number;
@@ -78,6 +75,9 @@ export default function VehiclesIndex({
     pending_maintenance_reports: number;
   };
 }) {
+  const { auth } = usePage<PageProps>().props;
+  const routePrefix = auth.user.role === 'admin' ? 'admin' : 'dispatcher';
+
   const { values, set } = useServerFilters(
     {
       search: filters.search ?? '',
@@ -97,13 +97,11 @@ export default function VehiclesIndex({
     name: string;
     plate_number: string;
     vehicle_type: string;
-    response_team_id: string;
     status: string;
   }>({
     name: '',
     plate_number: '',
     vehicle_type: 'ambulance',
-    response_team_id: 'none',
     status: 'available',
   });
 
@@ -118,8 +116,7 @@ export default function VehiclesIndex({
     vehicleForm.setData({
       name: v?.name ?? '',
       plate_number: v?.plate_number ?? '',
-      vehicle_type: v?.vehicle_type ?? 'ambulance',
-      response_team_id: v?.response_team_id ? String(v.response_team_id) : 'none',
+      vehicle_type: v?.vehicle_type && VEHICLE_TYPES.some((t) => t.value === v.vehicle_type) ? v.vehicle_type : 'ambulance',
       status: ['available', 'offline', 'maintenance'].includes(v?.status ?? '') ? v!.status : 'available',
     });
     setFormOpen(true);
@@ -128,15 +125,14 @@ export default function VehiclesIndex({
   const saveVehicle = () => {
     const payload = {
       ...vehicleForm.data,
-      response_team_id: vehicleForm.data.response_team_id === 'none' ? null : Number(vehicleForm.data.response_team_id),
     };
     if (editing) {
-      router.put(route('admin.vehicles.update', editing.id), payload, {
+      router.put(route(`${routePrefix}.vehicles.update`, editing.id), payload, {
         preserveScroll: true,
         onSuccess: () => setFormOpen(false),
       });
     } else {
-      router.post(route('admin.vehicles.store'), payload, {
+      router.post(route(`${routePrefix}.vehicles.store`), payload, {
         preserveScroll: true,
         onSuccess: () => setFormOpen(false),
       });
@@ -153,7 +149,7 @@ export default function VehiclesIndex({
 
   const submitReview = () => {
     if (!reviewing) return;
-    reviewForm.patch(route('admin.maintenance-reports.review', reviewing.id), {
+    reviewForm.patch(route(`${routePrefix}.maintenance-reports.review`, reviewing.id), {
       preserveScroll: true,
       onSuccess: () => setReviewing(null),
     });
@@ -390,8 +386,8 @@ export default function VehiclesIndex({
             <DialogTitle>{editing ? `Edit vehicle · ${editing.plate_number}` : 'Add vehicle'}</DialogTitle>
             <DialogDescription>
               {editing
-                ? 'Configure the plate number, assigned response team, and availability/maintenance status.'
-                : 'Configure the plate number, vehicle type, and assigned response team.'}
+                ? 'Configure the plate number, vehicle type, and availability/maintenance status.'
+                : 'Configure the plate number and vehicle type (Rescue truck, Ambulance, or Tow truck).'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3.5">
@@ -407,7 +403,7 @@ export default function VehiclesIndex({
               <Field label="Vehicle name / label" htmlFor="v-name" error={vErrors.name}>
                 <Input
                   id="v-name"
-                  placeholder="e.g. Rescue Ambulance 01"
+                  placeholder="e.g. Rescue Truck 01"
                   value={vehicleForm.data.name}
                   onChange={(e) => vehicleForm.setData('name', e.target.value)}
                 />
@@ -448,25 +444,6 @@ export default function VehiclesIndex({
                 </Field>
               )}
             </div>
-
-            <Field label="Assigned response team" htmlFor="v-team" error={vErrors.response_team_id}>
-              <Select
-                value={vehicleForm.data.response_team_id}
-                onValueChange={(v) => vehicleForm.setData('response_team_id', v)}
-              >
-                <SelectTrigger id="v-team" className="w-full">
-                  <SelectValue placeholder="Unassigned" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Unassigned</SelectItem>
-                  {teams.map((t) => (
-                    <SelectItem key={t.id} value={String(t.id)}>
-                      {t.team_name} ({t.status})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>
@@ -559,7 +536,7 @@ export default function VehiclesIndex({
         confirmLabel="Archive"
         onConfirm={() => {
           if (deleting) {
-            router.delete(route('admin.vehicles.destroy', deleting.id), { preserveScroll: true });
+            router.delete(route(`${routePrefix}.vehicles.destroy`, deleting.id), { preserveScroll: true });
             setDeleting(null);
           }
         }}

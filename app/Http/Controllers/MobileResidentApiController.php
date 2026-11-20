@@ -68,7 +68,8 @@ class MobileResidentApiController extends Controller
         abort_unless($resident->registration_status === 'accepted', 403, 'Your account is awaiting approval.');
 
         $data = $request->validate([
-            'incident_type_id' => ['required', 'integer', 'exists:incident_types,id'],
+            'incident_type_id' => ['required_without:incident_type_name', 'nullable', 'integer', 'exists:incident_types,id'],
+            'incident_type_name' => ['required_without:incident_type_id', 'nullable', 'string', 'max:80'],
             'reporter_type' => ['required', 'in:victim,witness'],
             'location' => ['required', 'string', 'max:255'],
             'lat' => ['required', 'numeric', 'between:-90,90'],
@@ -84,7 +85,20 @@ class MobileResidentApiController extends Controller
 
         try {
             [$report, $notification] = DB::transaction(function () use ($resident, $data, $photoPath): array {
-                $incidentType = IncidentType::query()->findOrFail($data['incident_type_id']);
+                if (! empty($data['incident_type_id'])) {
+                    $incidentType = IncidentType::query()->findOrFail($data['incident_type_id']);
+                } else {
+                    $name = trim((string) $data['incident_type_name']);
+                    $incidentType = IncidentType::query()
+                        ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                        ->first()
+                        ?? IncidentType::query()->firstOrCreate(
+                            ['name' => $name],
+                            ['description' => $name, 'priority' => 'high', 'color' => '#6b7280'],
+                        );
+                    $data['incident_type_id'] = $incidentType->getKey();
+                }
+                unset($data['incident_type_name']);
                 $report = $resident->reports()->create($data + [
                     'photo_path' => $photoPath,
                     'reference' => 'RPT-'.now()->format('Y').'-'.Str::upper(Str::random(8)),

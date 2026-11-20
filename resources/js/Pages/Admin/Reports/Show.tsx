@@ -12,12 +12,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { formatDateTime } from '@/lib/utils';
 import type { EmergencyReport } from '@/types/website';
 
-const Row = ({ k, v }: { k: string; v?: string | null }) => v ? <div className="flex justify-between gap-4 py-2 text-sm"><dt className="text-muted-foreground">{k}</dt><dd className="text-right font-medium">{v}</dd></div> : null;
+const Row = ({ k, v, always = false }: { k: string; v?: string | number | null; always?: boolean }) => {
+  const display = v !== null && v !== undefined && String(v).trim() !== '' ? String(v) : null;
+  if (!display && !always) return null;
+  return (
+    <div className="flex justify-between gap-4 py-2 text-sm">
+      <dt className="text-muted-foreground">{k}</dt>
+      <dd className="text-right font-medium">{display ?? '—'}</dd>
+    </div>
+  );
+};
 
 export default function Show({ report: r }: { report: EmergencyReport }) {
   const [confirmArchive, setConfirmArchive] = useState(false);
   const upd = (patch: Record<string, string>) => router.patch(route('admin.reports.update', r.id), { status: r.status, priority: r.priority, ...patch }, { preserveScroll: true });
   const f = r.form;
+  const e = f?.emergency_section ?? {};
+  const victim = (r.victim_info ?? {}) as Record<string, unknown>;
+  const pickVal = (...candidates: unknown[]): string | null => {
+    for (const c of candidates) {
+      if (c !== null && c !== undefined && String(c).trim() !== '') {
+        return String(c).trim();
+      }
+    }
+    return null;
+  };
   const canArchive = r.status === 'resolved' || r.status === 'invalid';
   return (
     <AppLayout>
@@ -64,30 +83,44 @@ export default function Show({ report: r }: { report: EmergencyReport }) {
           <CardHeader><CardTitle>Location</CardTitle></CardHeader>
           <CardContent><LocationMap lat={r.lat} lng={r.lng} label={r.reference} /></CardContent>
         </Card>
-        {f && Object.values(f.emergency_section ?? {}).some((v) => v !== null && v !== '' && (typeof v !== 'object' || Object.values(v ?? {}).some(Boolean))) && (
-          <Card className="lg:col-span-2">
-            <CardHeader><CardTitle>Emergency / Patient Care Report</CardTitle></CardHeader>
-            <CardContent className="grid gap-x-10 gap-y-4 sm:grid-cols-2">
+        <Card className="lg:col-span-2">
+          <CardHeader><CardTitle>Emergency Report</CardTitle></CardHeader>
+          <CardContent className="grid gap-x-10 gap-y-6 sm:grid-cols-2">
+            <div>
+              <p className="eyebrow mb-2">Incident &amp; Patient Details</p>
               <dl className="divide-y">
-                <Row k="Patient" v={f.emergency_section?.patientName} />
-                <Row k="Age / sex" v={[f.emergency_section?.age, f.emergency_section?.sex].filter(Boolean).join(' · ') || null} />
-                <Row k="Address" v={f.emergency_section?.address} />
-                <Row k="Incident" v={f.emergency_section?.typeOfIncident} />
-                <Row k="Time reported" v={f.emergency_section?.timeReported} />
-                <Row k="Time of arrival" v={f.emergency_section?.timeOfArrival} />
+                <Row k="Time Reported" v={pickVal(e.timeReported, victim.time_reported, r.reported_at ? formatDateTime(r.reported_at) : null)} always />
+                <Row k="Time of arrival on scene" v={pickVal(e.timeOfArrival, victim.time_of_arrival)} always />
+                <Row k="Date" v={pickVal(e.date, victim.date, r.reported_at ? r.reported_at.slice(0, 10) : null)} always />
+                <Row k="Location" v={pickVal(e.location, r.location)} always />
+                <Row k="Name of Patient" v={pickVal(e.patientName, victim.name)} always />
+                <Row k="Age" v={pickVal(e.age, victim.age)} always />
+                <Row k="Sex" v={pickVal(e.sex, victim.sex)} always />
+                <Row k="Address" v={pickVal(e.address, victim.address)} always />
+                <Row k="Type of incident" v={pickVal(e.typeOfIncident, victim.type_of_incident, r.incident_type?.name)} always />
               </dl>
-              <dl className="divide-y">
-                <Row k="Blood pressure" v={f.emergency_section?.vitalSigns?.bloodPressure} />
-                <Row k="Pulse rate" v={f.emergency_section?.vitalSigns?.pulseRate} />
-                <Row k="Respiration" v={f.emergency_section?.vitalSigns?.respiration} />
-                <Row k="Allergies" v={f.emergency_section?.allergies} />
-                <Row k="Medications" v={f.emergency_section?.medications} />
-                <Row k="Assessment" v={f.emergency_section?.assessmentComment} />
-                <Row k="Treatment" v={f.emergency_section?.treatmentManagement} />
-              </dl>
-            </CardContent>
-          </Card>
-        )}
+            </div>
+            <div className="space-y-6">
+              <div>
+                <p className="eyebrow mb-2">Clinical Assessment &amp; Care</p>
+                <dl className="divide-y">
+                  <Row k="Allergies" v={pickVal(e.allergies, victim.allergies)} always />
+                  <Row k="Medication" v={pickVal(e.medications, victim.medications)} always />
+                  <Row k="Assessment / Comment" v={pickVal(e.assessmentComment, victim.assessment_comment, victim.symptoms)} always />
+                  <Row k="Treatment / Management" v={pickVal(e.treatmentManagement, victim.treatment_management)} always />
+                </dl>
+              </div>
+              <div>
+                <p className="eyebrow mb-2">Vital Sign</p>
+                <dl className="divide-y">
+                  <Row k="Blood Pressure" v={pickVal(e.vitalSigns?.bloodPressure, victim.blood_pressure)} always />
+                  <Row k="Pulse Rate (BPM)" v={pickVal(e.vitalSigns?.pulseRate, victim.pulse_rate)} always />
+                  <Row k="Respiration (BPM)" v={pickVal(e.vitalSigns?.respiration, victim.respiration)} always />
+                </dl>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         {f && Object.values(f.driver_section ?? {}).some((v) => v !== null && v !== '') && (
           <Card className="lg:col-span-2">
             <CardHeader><CardTitle>Driver Form</CardTitle></CardHeader>

@@ -150,9 +150,9 @@ class MobileFleetController extends Controller
             $request->merge(['plate_number' => $request->input('number')]);
         }
         if (! $request->filled('vehicle_type') && $request->filled('type')) {
-            $request->merge(['vehicle_type' => strtolower(trim((string) $request->input('type')))]);
+            $request->merge(['vehicle_type' => str_replace([' ', '_'], '-', strtolower(trim((string) $request->input('type'))))]);
         } elseif ($request->filled('vehicle_type')) {
-            $request->merge(['vehicle_type' => strtolower(trim((string) $request->input('vehicle_type')))]);
+            $request->merge(['vehicle_type' => str_replace([' ', '_'], '-', strtolower(trim((string) $request->input('vehicle_type'))))]);
         }
 
         $data = $request->validate([

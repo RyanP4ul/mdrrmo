@@ -31,8 +31,10 @@ export interface ReportForm {
     emergency_section: {
         timeReported?: string;
         timeOfArrival?: string;
+        date?: string;
+        location?: string;
         patientName?: string;
-        age?: string;
+        age?: string | number;
         sex?: string;
         address?: string;
         typeOfIncident?: string;

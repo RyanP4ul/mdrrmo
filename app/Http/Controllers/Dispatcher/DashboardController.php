@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Dispatcher;
 use App\Http\Controllers\Controller;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
+use App\Models\ResponseTeam;
 use App\Services\DispatchService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +19,37 @@ class DashboardController extends Controller
     public function index()
     {
         $team = $this->dispatch->autoAssignTeam();
+        $teams = ResponseTeam::query()
+            ->where('status', 'active')
+            ->with([
+                'members' => fn ($q) => $q->where('status', 'active')->with('user:id,status'),
+                'vehicles',
+                'activeVehicle',
+            ])
+            ->orderBy('team_name')
+            ->get()
+            ->map(function (ResponseTeam $t): array {
+                $onShift = $this->dispatch->onShiftMembers($t);
+                $members = ($onShift->isNotEmpty() ? $onShift : $t->members)
+                    ->map(fn ($m): array => [
+                        'id' => $m->id,
+                        'name' => $m->name,
+                        'role' => $m->role,
+                    ])->values()->all();
+                $vehicle = $t->resolveActiveVehicle();
+                $vehicleLabel = $vehicle
+                    ? ($vehicle->name ?: ucfirst(str_replace('-', ' ', $vehicle->vehicle_type)).' '.$vehicle->plate_number)
+                    : null;
+
+                return [
+                    'id' => $t->id,
+                    'name' => $t->team_name,
+                    'shift_team' => $t->shift_team,
+                    'vehicle_name' => $vehicleLabel,
+                    'members' => $members,
+                ];
+            })
+            ->values();
 
         return Inertia::render('Dispatcher/Dashboard', [
             'incoming' => EmergencyReport::with(['incidentType:id,name,color', 'team:id,team_name'])->active()
@@ -29,6 +61,7 @@ class DashboardController extends Controller
             'types' => IncidentType::orderBy('name')->get(['id', 'name', 'priority']),
             'autoTeam' => $team ? ['id' => $team->id, 'name' => $team->team_name,
                 'members' => $this->dispatch->onShiftMembers($team)->map->only('id', 'name', 'role')->values()] : null,
+            'teams' => $teams,
         ]);
     }
 
@@ -38,18 +71,21 @@ class DashboardController extends Controller
         if ($request->filled('report_id')) {
             $data = $request->validate([
                 'report_id' => ['required', 'integer', 'exists:emergency_reports,id'],
+                'team_id' => ['nullable', 'integer', 'exists:response_teams,id'],
             ]);
 
             $report = EmergencyReport::findOrFail($data['report_id']);
             Gate::authorize('dispatch', $report);
 
-            $report = $this->dispatch->dispatch($report);
+            $selectedTeam = ! empty($data['team_id']) ? ResponseTeam::find($data['team_id']) : null;
+            $report = $this->dispatch->dispatch($report, $selectedTeam);
 
             return redirect()->route('dispatcher.reports.show', $report)->with('success', "Dispatched {$report->team->team_name}.");
         }
 
         $data = $request->validate([
             'incident_type_id' => ['required', 'exists:incident_types,id'],
+            'team_id' => ['nullable', 'integer', 'exists:response_teams,id'],
             'reporter_name' => ['required', 'string', 'max:120'],
             'reporter_contact' => ['required', 'string', 'max:30'],
             'location' => ['required', 'string', 'max:255'],
@@ -61,9 +97,11 @@ class DashboardController extends Controller
             'witness_info' => ['nullable', 'array'],
         ]);
 
+        $teamId = $data['team_id'] ?? null;
+        unset($data['team_id']);
         $priority = IncidentType::find($data['incident_type_id'])->priority; // priority comes from the incident type
 
-        $report = DB::transaction(function () use ($data, $priority) {
+        $report = DB::transaction(function () use ($data, $priority, $teamId) {
             $report = EmergencyReport::create($data + [
                 'reference' => EmergencyReport::generateReference(),
                 'source' => 'emergency-call',
@@ -71,7 +109,9 @@ class DashboardController extends Controller
                 'description' => $data['description'] ?? '',
             ]);
 
-            return $this->dispatch->dispatch($report);
+            $selectedTeam = $teamId ? ResponseTeam::find($teamId) : null;
+
+            return $this->dispatch->dispatch($report, $selectedTeam);
         });
 
         return redirect()->route('dispatcher.reports.show', $report)->with('success', "Dispatched {$report->team->team_name}.");

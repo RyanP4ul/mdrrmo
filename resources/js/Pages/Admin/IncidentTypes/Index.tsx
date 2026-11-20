@@ -58,7 +58,7 @@ export default function Index({ types, filters }: { types: Paginated<IncidentTyp
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-48">Name</TableHead><TableHead className="hidden md:table-cell">Description</TableHead>
+                  <TableHead className="w-48">Incident Type</TableHead><TableHead className="hidden md:table-cell">Description</TableHead>
                   <TableHead className="w-28">Priority</TableHead>
                   <TableHead className="w-28 text-center">Actions</TableHead>
                 </TableRow>
@@ -91,7 +91,7 @@ export default function Index({ types, filters }: { types: Paginated<IncidentTyp
             <DialogDescription>Priority determines the color used on charts and the incident map.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <Field label="Name" htmlFor="name" required error={form.errors.name}>
+            <Field label="Incident Type" htmlFor="name" required error={form.errors.name}>
               <Input id="name" value={form.data.name} onChange={(e) => form.setData('name', e.target.value)} />
             </Field>
             <Field label="Description" htmlFor="desc" required error={form.errors.description}>

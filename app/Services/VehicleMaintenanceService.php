@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\VehicleLocationUpdated;
+use App\Models\DispatcherUser;
 use App\Models\DriverNotification;
 use App\Models\DriverResponderUser;
 use App\Models\MaintenanceReport;
@@ -163,7 +164,8 @@ class VehicleMaintenanceService
             'recommend_out_of_service' => $report->recommend_out_of_service,
             'status' => $report->status,
             'reviewed_by' => $report->reviewed_by,
-            'reviewer_name' => $report->reviewer?->full_name,
+            'reviewer_name' => $report->reviewer?->full_name
+                ?? ($report->reviewed_by ? DispatcherUser::withTrashed()->find($report->reviewed_by)?->full_name : null),
             'reviewed_at' => $report->reviewed_at?->toIso8601String(),
             'resolved_at' => $report->resolved_at?->toIso8601String(),
             'admin_notes' => $report->admin_notes,
