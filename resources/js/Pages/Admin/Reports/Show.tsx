@@ -64,7 +64,7 @@ export default function Show({ report: r }: { report: EmergencyReport }) {
           <CardContent className="space-y-3">
             <dl className="divide-y">
               <Row k="Location" v={r.location} /><Row k="Source" v={r.source === 'mobile-app' ? 'Mobile app' : 'Emergency call'} />
-              <Row k="Reporter" v={`${r.reporter_name}${r.reporter_contact ? ' · ' + r.reporter_contact : ''}`} />
+              <Row k="Reporter" v={[r.reporter_name, r.reporter_contact].filter(Boolean).join(' · ') || '—'} />
               <Row k="Team" v={r.team?.team_name} /><Row k="Driver" v={r.driver ? `${r.driver.first_name} ${r.driver.last_name}` : null} />
             </dl>
             <p className="rounded-md bg-muted p-3 text-sm">{r.description || 'No description provided.'}</p>

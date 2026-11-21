@@ -177,7 +177,10 @@ export default function Index({
                     </span>
                     <span className="mt-0.5 block truncate text-sm">{r.location}</span>
                     <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                      <span className="font-mono">{r.reference}</span> · {r.reporter_name}{r.reporter_contact && ` · ${r.reporter_contact}`} · <span className="tabular-nums">{formatDateTime(r.reported_at)}</span>
+                      <span className="font-mono">{r.reference}</span>
+                      {(r.reporter_name || r.reporter_contact) && (
+                        <> · {[r.reporter_name, r.reporter_contact].filter(Boolean).join(' · ')}</>
+                      )} · <span className="tabular-nums">{formatDateTime(r.reported_at)}</span>
                     </span>
                   </span>
                   <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />

@@ -608,4 +608,64 @@ class WebsiteImprovementTest extends TestCase
             'reported_at' => now(),
         ], $attributes));
     }
+
+    public function test_dispatcher_phone_call_allows_nullable_caller_and_contact_when_victim_but_requires_them_for_witness(): void
+    {
+        $dispatcher = DispatcherUser::factory()->create(['status' => 'active']);
+        $driver = DriverResponderUser::factory()->create(['status' => 'active']);
+        $team = ResponseTeam::create(['team_name' => 'Alpha Team', 'status' => 'active']);
+        TeamMember::create([
+            'response_team_id' => $team->id,
+            'user_id' => $driver->id,
+            'name' => $driver->full_name,
+            'role' => 'Driver',
+            'status' => 'active',
+        ]);
+        Vehicle::create([
+            'response_team_id' => $team->id,
+            'plate_number' => 'AMB-VIC1',
+            'vehicle_type' => 'ambulance',
+            'status' => 'available',
+        ]);
+        $type = IncidentType::create([
+            'name' => 'Medical Emergency',
+            'description' => 'Medical',
+            'priority' => 'high',
+        ]);
+
+        // Witness still requires caller name and contact number.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'incident_type_id' => $type->id,
+                'team_id' => $team->id,
+                'reporter_type' => 'witness',
+                'reporter_name' => '',
+                'reporter_contact' => '',
+                'location' => 'Brgy. San Juan',
+                'lat' => 14.815,
+                'lng' => 120.909,
+            ])
+            ->assertSessionHasErrors(['reporter_name', 'reporter_contact']);
+
+        // Victim allows blank/null caller name, contact number, victim age/sex, and omitted map pin.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'incident_type_id' => $type->id,
+                'team_id' => $team->id,
+                'reporter_type' => 'victim',
+                'reporter_name' => null,
+                'reporter_contact' => null,
+                'location' => 'Brgy. San Juan',
+                'victim_info' => ['name' => 'Unconscious Victim', 'age' => null, 'sex' => null],
+            ])
+            ->assertRedirect();
+
+        $created = EmergencyReport::latest('id')->firstOrFail();
+        $this->assertSame('victim', $created->reporter_type);
+        $this->assertNull($created->reporter_name);
+        $this->assertNull($created->reporter_contact);
+        $this->assertNull($created->victim_info['age']);
+        $this->assertNull($created->victim_info['sex']);
+        $this->assertSame('dispatched', $created->status);
+    }
 }

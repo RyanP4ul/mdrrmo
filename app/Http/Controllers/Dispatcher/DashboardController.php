@@ -199,19 +199,43 @@ class DashboardController extends Controller
         $data = $request->validate([
             'incident_type_id' => ['required', 'exists:incident_types,id'],
             'team_id' => ['nullable', 'integer', 'exists:response_teams,id'],
-            'reporter_name' => ['required', 'string', 'max:120'],
-            'reporter_contact' => ['required', 'string', 'max:30'],
-            'location' => ['required', 'string', 'max:255'],
-            'lat' => ['required', 'numeric', 'between:-90,90'],
-            'lng' => ['required', 'numeric', 'between:-180,180'],
-            'description' => ['nullable', 'string', 'max:2000'],
             'reporter_type' => ['required', 'in:victim,witness'],
+            'reporter_name' => ['required_if:reporter_type,witness', 'nullable', 'string', 'max:120'],
+            'reporter_contact' => ['required_if:reporter_type,witness', 'nullable', 'string', 'max:30'],
+            'location' => ['required', 'string', 'max:255'],
+            'lat' => ['nullable', 'numeric', 'between:-90,90'],
+            'lng' => ['nullable', 'numeric', 'between:-180,180'],
+            'description' => ['nullable', 'string', 'max:2000'],
             'victim_info' => ['nullable', 'array'],
+            'victim_info.name' => ['nullable', 'string', 'max:120'],
+            'victim_info.age' => ['nullable', 'integer', 'between:0,130'],
+            'victim_info.sex' => ['nullable', 'string', 'max:20'],
             'witness_info' => ['nullable', 'array'],
         ]);
 
         $teamId = $data['team_id'] ?? null;
         unset($data['team_id']);
+        $data['reporter_name'] = isset($data['reporter_name']) && trim($data['reporter_name']) !== ''
+            ? trim($data['reporter_name'])
+            : null;
+        $data['reporter_contact'] = isset($data['reporter_contact']) && trim($data['reporter_contact']) !== ''
+            ? trim($data['reporter_contact'])
+            : null;
+        $data['lat'] = $data['lat'] ?? 14.8153;
+        $data['lng'] = $data['lng'] ?? 120.9094;
+        if (isset($data['victim_info']) && is_array($data['victim_info'])) {
+            $data['victim_info'] = [
+                'name' => isset($data['victim_info']['name']) && trim((string) $data['victim_info']['name']) !== ''
+                    ? trim((string) $data['victim_info']['name'])
+                    : null,
+                'age' => isset($data['victim_info']['age']) && trim((string) $data['victim_info']['age']) !== ''
+                    ? (int) $data['victim_info']['age']
+                    : null,
+                'sex' => isset($data['victim_info']['sex']) && trim((string) $data['victim_info']['sex']) !== ''
+                    ? trim((string) $data['victim_info']['sex'])
+                    : null,
+            ];
+        }
         $priority = IncidentType::find($data['incident_type_id'])->priority; // priority comes from the incident type
 
         $report = DB::transaction(function () use ($data, $priority, $teamId) {

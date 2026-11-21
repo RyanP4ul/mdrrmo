@@ -12,7 +12,6 @@ import { EmptyState } from '@/components/EmptyState';
 import { Field } from '@/components/Field';
 import { FilterBar } from '@/components/FilterBar';
 import { LocationMap } from '@/components/maps/LocationMap';
-import { LocationPicker } from '@/components/maps/LocationPicker';
 import { DEFAULT_CENTER } from '@/components/maps/constants';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -55,7 +54,7 @@ interface Report {
   description: string;
   photo_url?: string | null;
   source: string;
-  reporter_name: string;
+  reporter_name: string | null;
   reporter_contact: string | null;
   incident_type_id: number;
   response_team_id?: number | null;
@@ -212,8 +211,8 @@ function DispatchForm({
     reporter_name: selected?.reporter_name ?? '',
     reporter_contact: selected?.reporter_contact ?? '',
     location: selected?.location ?? '',
-    lat: selected?.lat ?? DEFAULT_CENTER[1],
-    lng: selected?.lng ?? DEFAULT_CENTER[0],
+    lat: selected?.lat ?? null,
+    lng: selected?.lng ?? null,
     description: selected?.description ?? '',
     reporter_type: (selected ? (selected.reporter_type ?? '') : 'victim') as 'victim' | 'witness' | '',
     victim_info: {
@@ -229,6 +228,7 @@ function DispatchForm({
   const displayValue = (value: string) => (readOnly ? value.trim() || '—' : value);
   const showVictimInfo = form.data.reporter_type === 'victim' || (readOnly && Boolean(form.data.victim_info.name || form.data.victim_info.age || form.data.victim_info.sex));
   const showWitnessInfo = form.data.reporter_type === 'witness' || (readOnly && Boolean(form.data.witness_info.statement));
+  const callerRequired = !readOnly && form.data.reporter_type !== 'victim';
 
   const selectedTeamOption =
     form.data.team_id === 'auto'
@@ -311,7 +311,7 @@ function DispatchForm({
   };
 
   if (isBackup && selected) {
-    const requestingTeamName = selected.requested_by_team?.team_name ?? selected.reporter_name;
+    const requestingTeamName = selected.requested_by_team?.team_name ?? selected.reporter_name ?? 'Response team';
     const requiredLabel = selected.requested_vehicle_label ?? 'Any available vehicle';
 
     return (
@@ -556,10 +556,10 @@ function DispatchForm({
         <fieldset className="space-y-4">
           <legend className="eyebrow mb-3">Caller and incident</legend>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Caller / reporter" htmlFor="rn" required={!readOnly} error={e.reporter_name}>
+            <Field label="Caller / reporter" htmlFor="rn" required={callerRequired} hint={!readOnly && !callerRequired ? 'Optional for victim' : undefined} error={e.reporter_name}>
               <Input id="rn" autoComplete="name" readOnly={readOnly} className={readOnlyClass} aria-invalid={!!e.reporter_name} value={displayValue(form.data.reporter_name)} onChange={readOnly ? undefined : (ev) => form.setData('reporter_name', ev.target.value)} />
             </Field>
-            <Field label="Contact number" htmlFor="rc" required={!readOnly} error={e.reporter_contact}>
+            <Field label="Contact number" htmlFor="rc" required={callerRequired} hint={!readOnly && !callerRequired ? 'Optional for victim' : undefined} error={e.reporter_contact}>
               <Input id="rc" type="tel" inputMode="tel" placeholder={readOnly ? undefined : '09XX XXX XXXX'} autoComplete="tel" readOnly={readOnly} className={readOnlyClass} aria-invalid={!!e.reporter_contact} value={displayValue(form.data.reporter_contact)} onChange={readOnly ? undefined : (ev) => form.setData('reporter_contact', ev.target.value)} />
             </Field>
           </div>
@@ -587,8 +587,22 @@ function DispatchForm({
           {showVictimInfo && (
             <div className="grid gap-4 sm:grid-cols-3">
               {(['name', 'age', 'sex'] as const).map((k) => (
-                <Field key={k} label={`Victim ${k}`} htmlFor={`victim-${k}`}>
-                  <Input id={`victim-${k}`} inputMode={k === 'age' ? 'numeric' : 'text'} readOnly={readOnly} className={readOnlyClass} value={displayValue(form.data.victim_info[k])} onChange={readOnly ? undefined : (ev) => form.setData('victim_info', { ...form.data.victim_info, [k]: ev.target.value })} />
+                <Field
+                  key={k}
+                  label={`Victim ${k}`}
+                  htmlFor={`victim-${k}`}
+                  hint={!readOnly && k !== 'name' ? 'Optional' : undefined}
+                  error={e[`victim_info.${k}`]}
+                >
+                  <Input
+                    id={`victim-${k}`}
+                    inputMode={k === 'age' ? 'numeric' : 'text'}
+                    placeholder={!readOnly && k !== 'name' ? 'Optional' : undefined}
+                    readOnly={readOnly}
+                    className={readOnlyClass}
+                    value={displayValue(form.data.victim_info[k])}
+                    onChange={readOnly ? undefined : (ev) => form.setData('victim_info', { ...form.data.victim_info, [k]: ev.target.value })}
+                  />
                 </Field>
               ))}
             </div>
@@ -603,7 +617,7 @@ function DispatchForm({
           <Field label="Location" htmlFor="loc" required={!readOnly} error={e.location}>
             <Input id="loc" placeholder={readOnly ? undefined : 'Street, barangay, landmark'} readOnly={readOnly} className={readOnlyClass} value={displayValue(form.data.location)} onChange={readOnly ? undefined : (ev) => form.setData('location', ev.target.value)} />
           </Field>
-          {readOnly ? (
+          {readOnly && selected && (
             <Field label="Map pin" hint="Submitted incident location.">
               <LocationMap
                 lat={Number.isFinite(selected.lat) ? selected.lat : DEFAULT_CENTER[1]}
@@ -611,10 +625,6 @@ function DispatchForm({
                 label={selected.reference}
                 className="h-52"
               />
-            </Field>
-          ) : (
-            <Field label="Map pin" hint="Drag the pin to mark the incident location.">
-              <LocationPicker lat={form.data.lat} lng={form.data.lng} onChange={(la, ln) => { form.setData((d) => ({ ...d, lat: la, lng: ln })); }} className="h-52" />
             </Field>
           )}
           <Field label="What happened?" htmlFor="incident-description" error={e.description}>
@@ -711,7 +721,7 @@ export default function Dashboard({ incoming, counts, types, autoTeam, teams = [
   const [pendingOnly, setPendingOnly] = useState(false);
   const formPanel = useRef<HTMLDivElement>(null);
   const selected = incoming.find((r) => r.id === selId) ?? null;
-  const visibleReports = incoming.filter((r) => (!pendingOnly || r.status === 'pending') && `${r.reference} ${r.location} ${r.incident_type.name} ${r.reporter_name} ${r.requested_vehicle_label ?? ''}`.toLowerCase().includes(search.toLowerCase()));
+  const visibleReports = incoming.filter((r) => (!pendingOnly || r.status === 'pending') && `${r.reference} ${r.location} ${r.incident_type.name} ${r.reporter_name ?? ''} ${r.requested_vehicle_label ?? ''}`.toLowerCase().includes(search.toLowerCase()));
   useEffect(() => {
     if (selId !== null && window.matchMedia('(max-width: 1279px)').matches) {
       formPanel.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });

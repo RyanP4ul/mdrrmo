@@ -81,7 +81,7 @@ export interface EmergencyReport {
     resolved_at?: string | null;
     withdrawn_at?: string | null;
     withdrawal_reason?: string | null;
-    reporter_name?: string;
+    reporter_name?: string | null;
     reporter_contact?: string | null;
     incident_type: IncidentTypeSummary;
     team?: ResponseTeamSummary | null;
