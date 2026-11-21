@@ -1,6 +1,6 @@
 import { Head, Link, useForm, usePage } from '@inertiajs/react';
 import { route } from 'ziggy-js';
-import { FileText, Pencil, Shield, Truck, Wrench } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Pencil, Shield, Truck, Wrench } from 'lucide-react';
 import { useState, type ChangeEvent } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
 import { PageHeader } from '@/components/PageHeader';
@@ -46,6 +46,8 @@ const blankEmergency = {
   assessmentComment: '',
   treatmentManagement: '',
   vitalSigns: { bloodPressure: '', pulseRate: '', respiration: '' },
+  endorsedBy: { name: '', time: '', date: '' },
+  endorsedTo: { name: '', time: '', date: '' },
 };
 
 const LABEL: Record<string, string> = {
@@ -72,6 +74,12 @@ const LABEL: Record<string, string> = {
   bloodPressure: 'Blood pressure',
   pulseRate: 'Pulse rate',
   respiration: 'Respiration',
+  endorsedByName: 'Name',
+  endorsedByTime: 'Time',
+  endorsedByDate: 'Date',
+  endorsedToName: 'Name',
+  endorsedToTime: 'Time',
+  endorsedToDate: 'Date',
 };
 
 type ReportWithTrip = EmergencyReport & {
@@ -128,6 +136,7 @@ export default function Reports({
 }) {
   const { auth } = usePage<PageProps>().props;
   const [tab, setTab] = useState<'driver' | 'emergency'>(isDriver ? 'driver' : 'emergency');
+  const [showResolvedEmergency, setShowResolvedEmergency] = useState(false);
   const [driverSchedule, setDriverSchedule] = useState<AssignedScheduleRow | null>(null);
   const [emergencyRep, setEmergencyRep] = useState<ReportWithTrip | null>(null);
 
@@ -192,6 +201,16 @@ export default function Reports({
               pulseRate: saved.vitalSigns?.pulseRate ?? '',
               respiration: saved.vitalSigns?.respiration ?? '',
             },
+            endorsedBy: {
+              name: saved.endorsedBy?.name ?? '',
+              time: saved.endorsedBy?.time ?? '',
+              date: saved.endorsedBy?.date ?? '',
+            },
+            endorsedTo: {
+              name: saved.endorsedTo?.name ?? '',
+              time: saved.endorsedTo?.time ?? '',
+              date: saved.endorsedTo?.date ?? '',
+            },
           }
         : {
             ...blankEmergency,
@@ -212,7 +231,7 @@ export default function Reports({
     },
   });
 
-  const e = (k: Exclude<keyof typeof blankEmergency, 'vitalSigns' | 'sex' | 'typeOfIncident'>) => ({
+  const e = (k: Exclude<keyof typeof blankEmergency, 'vitalSigns' | 'endorsedBy' | 'endorsedTo' | 'sex' | 'typeOfIncident'>) => ({
     id: `ef-${k}`,
     value: emergencyForm.data.emergency_section[k],
     error: (emergencyForm.errors as Record<string, string | undefined>)[`emergency_section.${k}`],
@@ -230,6 +249,54 @@ export default function Reports({
         vitalSigns: { ...emergencyForm.data.emergency_section.vitalSigns, [k]: ev.target.value },
       }),
   });
+
+  const endorse = (party: 'endorsedBy' | 'endorsedTo', field: 'name' | 'time' | 'date') => ({
+    id: `ef-${party}-${field}`,
+    value: emergencyForm.data.emergency_section[party][field],
+    error: (emergencyForm.errors as Record<string, string | undefined>)[`emergency_section.${party}.${field}`],
+    onChange: (ev: ChangeEvent<HTMLInputElement>) =>
+      emergencyForm.setData('emergency_section', {
+        ...emergencyForm.data.emergency_section,
+        [party]: { ...emergencyForm.data.emergency_section[party], [field]: ev.target.value },
+      }),
+  });
+
+  const activeEmergencyReports = reports.data.filter((r) => r.status !== 'resolved');
+  const resolvedEmergencyReports = reports.data.filter((r) => r.status === 'resolved');
+
+  const renderEmergencyRow = (r: ReportWithTrip) => {
+    const hasEmergencyForm =
+      r.form?.emergency_section &&
+      Object.values(r.form.emergency_section).some(
+        (v) => v !== null && v !== '' && (typeof v !== 'object' || Object.values(v ?? {}).some(Boolean)),
+      );
+    return (
+      <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-mono text-xs text-muted-foreground">{r.reference}</span>
+            <span className="font-medium">{r.incident_type.name}</span>
+            <StatusBadge value={r.status} />
+            <span
+              className={cn(
+                'inline-flex h-5 items-center rounded-sm px-1.5 text-xs font-medium',
+                hasEmergencyForm ? 'bg-ok-soft text-ok' : 'bg-warning-soft text-warning',
+              )}
+            >
+              {hasEmergencyForm ? 'Emergency Form saved' : 'Emergency Form pending'}
+            </span>
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">{r.location}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant={hasEmergencyForm ? 'outline' : 'default'} onClick={() => openEmergencyForm(r)}>
+            <Pencil aria-hidden="true" />
+            {hasEmergencyForm ? 'Edit Emergency Form' : 'Fill Emergency Form'}
+          </Button>
+        </div>
+      </li>
+    );
+  };
 
   const f = (
     k: string,
@@ -348,44 +415,49 @@ export default function Reports({
           <EmptyState icon={FileText} title="Nothing to report yet" hint="Emergency calls assigned to your team will appear here." />
         </div>
       ) : (
-        <>
-          <ul className="divide-y rounded-lg border bg-card">
-            {reports.data.map((r) => {
-              const hasEmergencyForm =
-                r.form?.emergency_section &&
-                Object.values(r.form.emergency_section).some(
-                  (v) => v !== null && v !== '' && (typeof v !== 'object' || Object.values(v ?? {}).some(Boolean)),
-                );
-              return (
-                <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
-                  <div className="min-w-0">
-                    <p className="flex flex-wrap items-center gap-2 text-sm">
-                      <span className="font-mono text-xs text-muted-foreground">{r.reference}</span>
-                      <span className="font-medium">{r.incident_type.name}</span>
-                      <StatusBadge value={r.status} />
-                      <span
-                        className={cn(
-                          'inline-flex h-5 items-center rounded-sm px-1.5 text-xs font-medium',
-                          hasEmergencyForm ? 'bg-ok-soft text-ok' : 'bg-warning-soft text-warning',
-                        )}
-                      >
-                        {hasEmergencyForm ? 'Emergency Form saved' : 'Emergency Form pending'}
-                      </span>
-                    </p>
-                    <p className="mt-1 text-sm text-muted-foreground">{r.location}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant={hasEmergencyForm ? 'outline' : 'default'} onClick={() => openEmergencyForm(r)}>
-                      <Pencil aria-hidden="true" />
-                      {hasEmergencyForm ? 'Edit Emergency Form' : 'Fill Emergency Form'}
-                    </Button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+        <div className="space-y-5">
+          {activeEmergencyReports.length === 0 ? (
+            <div className="rounded-lg border bg-card">
+              <EmptyState
+                icon={FileText}
+                title="No active emergency incidents"
+                hint="Active incidents assigned to your team will appear here."
+              />
+            </div>
+          ) : (
+            <ul className="divide-y rounded-lg border bg-card">
+              {activeEmergencyReports.map(renderEmergencyRow)}
+            </ul>
+          )}
+
+          {resolvedEmergencyReports.length > 0 && (
+            <section className="overflow-hidden rounded-lg border bg-card">
+              <button
+                type="button"
+                onClick={() => setShowResolvedEmergency((prev) => !prev)}
+                aria-expanded={showResolvedEmergency}
+                className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+              >
+                <span className="inline-flex items-center gap-2">
+                  {showResolvedEmergency ? (
+                    <ChevronDown className="size-4" aria-hidden="true" />
+                  ) : (
+                    <ChevronRight className="size-4" aria-hidden="true" />
+                  )}
+                  Resolved incidents ({resolvedEmergencyReports.length})
+                </span>
+                <span className="text-xs">{showResolvedEmergency ? 'Hide' : 'Show'}</span>
+              </button>
+              {showResolvedEmergency && (
+                <ul className="divide-y border-t">
+                  {resolvedEmergencyReports.map(renderEmergencyRow)}
+                </ul>
+              )}
+            </section>
+          )}
+
           <ServerPagination page={reports} noun="report" />
-        </>
+        </div>
       )}
 
       {/* Dedicated Driver Ticket Dialog (Scheduled Services Only) */}
@@ -542,6 +614,20 @@ export default function Reports({
                   }
                 />
               </Field>
+            </section>
+            <section className="grid gap-4 border-t pt-4 sm:grid-cols-2">
+              <div className="space-y-3">
+                <h3 className="eyebrow">Endorsed By</h3>
+                {f('endorsedByName', endorse('endorsedBy', 'name'))}
+                {f('endorsedByTime', endorse('endorsedBy', 'time'), { type: 'time' })}
+                {f('endorsedByDate', endorse('endorsedBy', 'date'), { type: 'date' })}
+              </div>
+              <div className="space-y-3">
+                <h3 className="eyebrow">Endorsed To</h3>
+                {f('endorsedToName', endorse('endorsedTo', 'name'))}
+                {f('endorsedToTime', endorse('endorsedTo', 'time'), { type: 'time' })}
+                {f('endorsedToDate', endorse('endorsedTo', 'date'), { type: 'date' })}
+              </div>
             </section>
           </div>
           <DialogFooter>

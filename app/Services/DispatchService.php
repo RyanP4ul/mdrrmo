@@ -22,15 +22,163 @@ use Illuminate\Validation\ValidationException;
 
 class DispatchService
 {
-    /** Least-busy active team that is currently on shift; falls back to any active team. */
-    public function autoAssignTeam(bool $lockForUpdate = false): ?ResponseTeam
+    /**
+     * IDs of response teams currently dispatched to an active emergency report
+     * or an active scheduled service.
+     *
+     * @return array<int, int>
+     */
+    public function busyTeamIds(?int $ignoreReportId = null): array
     {
-        $busy = fn ($q) => $q->whereIn('status', ['acknowledged', 'dispatched']);
+        $reportTeamIds = EmergencyReport::query()
+            ->whereIn('status', ['acknowledged', 'dispatched'])
+            ->whereNotNull('response_team_id')
+            ->when($ignoreReportId !== null, fn ($q) => $q->where('id', '!=', $ignoreReportId))
+            ->pluck('response_team_id');
+
+        $scheduleTeamIds = ServiceSchedule::query()
+            ->whereIn('status', ['en-route', 'on-scene'])
+            ->whereNotNull('response_team_id')
+            ->pluck('response_team_id');
+
+        return $reportTeamIds
+            ->merge($scheduleTeamIds)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * IDs of vehicles currently in use on active dispatches (including primary
+     * dispatches, active DispatchAssignments, and—for backup requests—the vehicle
+     * used on the parent incident / requesting team).
+     *
+     * @return array<int, int>
+     */
+    public function inUseVehicleIds(?int $ignoreReportId = null, ?EmergencyReport $backupReport = null): array
+    {
+        $ids = collect();
+
+        $ids = $ids->merge(
+            Vehicle::query()
+                ->whereNotNull('assigned_report_id')
+                ->when($ignoreReportId !== null, fn ($q) => $q->where('assigned_report_id', '!=', $ignoreReportId))
+                ->pluck('id'),
+        );
+
+        $ids = $ids->merge(
+            DispatchAssignment::query()
+                ->where('status', 'dispatched')
+                ->whereNotNull('vehicle_id')
+                ->when($ignoreReportId !== null, fn ($q) => $q->where('emergency_report_id', '!=', $ignoreReportId))
+                ->pluck('vehicle_id'),
+        );
+
+        // Include the active/default vehicle of any team currently dispatched to another active report/service.
+        $busyTeamIds = $this->busyTeamIds($ignoreReportId);
+        if ($busyTeamIds !== []) {
+            $busyTeams = ResponseTeam::query()
+                ->whereIn('id', $busyTeamIds)
+                ->with(['vehicles', 'activeVehicle'])
+                ->get();
+
+            foreach ($busyTeams as $busyTeam) {
+                $activeVehicle = $busyTeam->resolveActiveVehicle();
+                if ($activeVehicle) {
+                    $ids->push($activeVehicle->getKey());
+                }
+            }
+        }
+
+        if ($backupReport !== null && $backupReport->isBackupRequest()) {
+            $ids = $ids->merge($this->backupExcludedVehicleIds($backupReport));
+        }
+
+        return $ids
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Vehicle IDs specifically tied to the parent incident or requesting team
+     * of a backup request (cannot be reused for that backup).
+     *
+     * @return array<int, int>
+     */
+    public function backupExcludedVehicleIds(EmergencyReport $backupReport): array
+    {
+        if (! $backupReport->isBackupRequest()) {
+            return [];
+        }
+
+        $ids = collect();
+        $parentReport = $backupReport->relationLoaded('parentReport')
+            ? $backupReport->parentReport
+            : $backupReport->parentReport()->with(['assignedVehicle', 'activeDispatchAssignment', 'team.vehicles', 'team.activeVehicle'])->first();
+
+        if ($parentReport) {
+            $ids = $ids->merge(
+                Vehicle::query()
+                    ->where('assigned_report_id', $parentReport->getKey())
+                    ->pluck('id'),
+            );
+            $ids = $ids->merge(
+                DispatchAssignment::query()
+                    ->where('emergency_report_id', $parentReport->getKey())
+                    ->where('status', 'dispatched')
+                    ->whereNotNull('vehicle_id')
+                    ->pluck('vehicle_id'),
+            );
+            $parentResolved = $parentReport->resolvedVehicle();
+            if ($parentResolved) {
+                $ids->push($parentResolved->getKey());
+            }
+        }
+
+        $requestingTeamId = $backupReport->requested_by_team_id ?? $parentReport?->response_team_id;
+        if ($requestingTeamId) {
+            $requestingTeam = ResponseTeam::query()
+                ->with(['vehicles', 'activeVehicle'])
+                ->find($requestingTeamId);
+            if ($requestingTeam) {
+                if ($requestingTeam->active_vehicle_id) {
+                    $ids->push($requestingTeam->active_vehicle_id);
+                }
+                $resolved = $requestingTeam->resolveActiveVehicle();
+                if ($resolved) {
+                    $ids->push($resolved->getKey());
+                }
+            }
+        }
+
+        return $ids
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /** Available active team currently on shift; falls back to any available active team. Never returns an already-dispatched team. */
+    public function autoAssignTeam(
+        bool $lockForUpdate = false,
+        ?int $ignoreReportId = null,
+        ?int $excludeTeamId = null,
+    ): ?ResponseTeam {
+        $busyTeamIds = $this->busyTeamIds($ignoreReportId);
+        if ($excludeTeamId !== null && ! in_array($excludeTeamId, $busyTeamIds, true)) {
+            $busyTeamIds[] = $excludeTeamId;
+        }
 
         $activeTeamIds = null;
         if ($lockForUpdate) {
             $activeTeamIds = ResponseTeam::query()
                 ->where('status', 'active')
+                ->when($busyTeamIds !== [], fn ($q) => $q->whereNotIn('id', $busyTeamIds))
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->pluck('id');
@@ -44,6 +192,7 @@ class DispatchService
         $hasUsableVehicle = fn ($q) => $q->whereHas('vehicles', fn ($v) => $v->where('status', '!=', 'maintenance'));
 
         $onShift = ResponseTeam::where('status', 'active')
+            ->when($busyTeamIds !== [], fn ($q) => $q->whereNotIn('id', $busyTeamIds))
             ->where($hasUsableVehicle)
             ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active'))
                 ->where(fn ($role) => $role->where('response_teams.member_roles_enabled', false)->orWhere('role', 'Driver')))
@@ -51,8 +200,6 @@ class DispatchService
             ->whereHas('shifts', fn ($q) => $q->where('status', 'on-shift')
                 ->where('start_time', '<=', $now)
                 ->where('end_time', '>', $now))
-            ->withCount(['reports as busy_count' => $busy])
-            ->orderBy('busy_count')
             ->orderBy('id');
 
         $team = $onShift->first();
@@ -62,12 +209,11 @@ class DispatchService
         }
 
         return ResponseTeam::where('status', 'active')
+            ->when($busyTeamIds !== [], fn ($q) => $q->whereNotIn('id', $busyTeamIds))
             ->where($hasUsableVehicle)
             ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active'))
                 ->where(fn ($role) => $role->where('response_teams.member_roles_enabled', false)->orWhere('role', 'Driver')))
             ->when($activeTeamIds !== null, fn ($q) => $q->whereIn('id', $activeTeamIds))
-            ->withCount(['reports as busy_count' => $busy])
-            ->orderBy('busy_count')
             ->orderBy('id')
             ->first();
     }
@@ -103,22 +249,36 @@ class DispatchService
             }
 
             $isBackup = $lockedReport->isBackupRequest();
+            $requestingTeamId = $isBackup
+                ? ($lockedReport->requested_by_team_id ?? $lockedReport->parentReport?->response_team_id)
+                : null;
 
             $team = $team
                 ? ResponseTeam::query()->where('status', 'active')->lockForUpdate()->find($team->getKey())
-                : $this->autoAssignTeam(lockForUpdate: true);
+                : $this->autoAssignTeam(
+                    lockForUpdate: true,
+                    ignoreReportId: $lockedReport->getKey(),
+                    excludeTeamId: $requestingTeamId,
+                );
             if (! $team) {
-                $hasActiveTeamWithDriver = ResponseTeam::query()
+                $eligibleTeamQuery = ResponseTeam::query()
                     ->where('status', 'active')
                     ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active'))
-                        ->where(fn ($role) => $role->where('response_teams.member_roles_enabled', false)->orWhere('role', 'Driver')))
+                        ->where(fn ($role) => $role->where('response_teams.member_roles_enabled', false)->orWhere('role', 'Driver')));
+
+                $hasActiveTeamWithDriver = (clone $eligibleTeamQuery)->exists();
+                $hasActiveTeamWithoutVehicle = (clone $eligibleTeamQuery)->whereDoesntHave('vehicles')->exists();
+                $hasUsableVehicleTeam = (clone $eligibleTeamQuery)
+                    ->whereHas('vehicles', fn ($v) => $v->where('status', '!=', 'maintenance'))
                     ->exists();
-                $hasActiveTeamWithoutVehicle = ResponseTeam::query()
-                    ->where('status', 'active')
-                    ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active'))
-                        ->where(fn ($role) => $role->where('response_teams.member_roles_enabled', false)->orWhere('role', 'Driver')))
-                    ->whereDoesntHave('vehicles')
-                    ->exists();
+
+                if ($hasUsableVehicleTeam) {
+                    throw ValidationException::withMessages([
+                        'team' => $isBackup
+                            ? 'No other available response team is free for backup right now. All eligible teams are currently dispatched.'
+                            : 'All active response teams are currently dispatched. Wait for a team to complete its active response.',
+                    ]);
+                }
 
                 if ($hasActiveTeamWithoutVehicle) {
                     throw ValidationException::withMessages([
@@ -133,6 +293,33 @@ class DispatchService
                 ]);
             }
 
+            // Task 1: Cannot dispatch the same team that requested backup.
+            if ($isBackup && $requestingTeamId !== null && $team->getKey() === (int) $requestingTeamId) {
+                throw ValidationException::withMessages([
+                    'team' => "{$team->team_name} requested this backup and cannot be dispatched to its own backup request.",
+                ]);
+            }
+
+            // Task 2: Cannot dispatch a team that is already dispatched to another active emergency report.
+            $activeTeamReport = EmergencyReport::query()
+                ->where('response_team_id', $team->getKey())
+                ->whereIn('status', ['acknowledged', 'dispatched'])
+                ->where('id', '!=', $lockedReport->getKey())
+                ->first(['id', 'reference']);
+            if ($activeTeamReport) {
+                throw ValidationException::withMessages([
+                    'team' => "{$team->team_name} is already dispatched to {$activeTeamReport->reference} and cannot be dispatched again until that response is completed.",
+                ]);
+            }
+
+            $blockedVehicleIds = $this->inUseVehicleIds(
+                ignoreReportId: $lockedReport->getKey(),
+                backupReport: $isBackup ? $lockedReport : null,
+            );
+            $backupExcludedVehicleIds = $isBackup
+                ? $this->backupExcludedVehicleIds($lockedReport)
+                : [];
+
             $operationVehicle = null;
             if ($selectedVehicle !== null) {
                 $operationVehicle = Vehicle::query()->lockForUpdate()->find($selectedVehicle->getKey());
@@ -146,8 +333,14 @@ class DispatchService
                         'vehicle_id' => "{$operationVehicle->displayName()} is currently under maintenance and cannot be dispatched.",
                     ]);
                 }
-                $assignedElsewhere = $operationVehicle->assigned_report_id !== null
-                    && $operationVehicle->assigned_report_id !== $lockedReport->getKey();
+                if ($isBackup && in_array($operationVehicle->getKey(), $backupExcludedVehicleIds, true)) {
+                    throw ValidationException::withMessages([
+                        'vehicle_id' => "{$operationVehicle->displayName()} is already in use by the team that requested backup and cannot be assigned.",
+                    ]);
+                }
+                $assignedElsewhere = ($operationVehicle->assigned_report_id !== null
+                    && $operationVehicle->assigned_report_id !== $lockedReport->getKey())
+                    || in_array($operationVehicle->getKey(), $blockedVehicleIds, true);
                 if ($assignedElsewhere || ($operationVehicle->status !== 'available' && $operationVehicle->assigned_report_id !== $lockedReport->getKey())) {
                     throw ValidationException::withMessages([
                         'vehicle_id' => "{$operationVehicle->displayName()} is not currently available for dispatch.",
@@ -159,6 +352,7 @@ class DispatchService
                     $teamDefault
                     && $teamDefault->vehicle_type === $lockedReport->requested_vehicle_type
                     && $teamDefault->status === 'available'
+                    && ! in_array($teamDefault->getKey(), $blockedVehicleIds, true)
                     && ($teamDefault->assigned_report_id === null || $teamDefault->assigned_report_id === $lockedReport->getKey())
                 ) {
                     $operationVehicle = Vehicle::query()->lockForUpdate()->find($teamDefault->getKey());
@@ -166,6 +360,7 @@ class DispatchService
                     $operationVehicle = Vehicle::query()
                         ->where('vehicle_type', $lockedReport->requested_vehicle_type)
                         ->where('status', 'available')
+                        ->when($blockedVehicleIds !== [], fn ($q) => $q->whereNotIn('id', $blockedVehicleIds))
                         ->where(fn ($q) => $q->whereNull('assigned_report_id')->orWhere('assigned_report_id', $lockedReport->getKey()))
                         ->orderByRaw('CASE WHEN response_team_id = ? THEN 0 WHEN response_team_id IS NULL THEN 1 ELSE 2 END', [$team->getKey()])
                         ->orderBy('id')
@@ -192,6 +387,7 @@ class DispatchService
                     if (
                         $fallbackVehicle
                         && $fallbackVehicle->status === 'available'
+                        && ! in_array($fallbackVehicle->getKey(), $blockedVehicleIds, true)
                         && ($fallbackVehicle->assigned_report_id === null || $fallbackVehicle->assigned_report_id === $lockedReport->getKey())
                     ) {
                         $operationVehicle = Vehicle::query()->lockForUpdate()->find($fallbackVehicle->getKey());
@@ -217,7 +413,12 @@ class DispatchService
                 ]);
             }
             if (! $selectedDriver) {
-                DriverResponderUser::whereKey($driver->user_id)->where('status', 'active')->lockForUpdate()->firstOrFail();
+                $account = DriverResponderUser::whereKey($driver->user_id)->where('status', 'active')->lockForUpdate()->firstOrFail();
+                if (EmergencyReport::where('assigned_driver_id', $account->id)->whereIn('status', ['acknowledged', 'dispatched'])->where('id', '!=', $lockedReport->id)->exists()) {
+                    throw ValidationException::withMessages([
+                        'team' => 'This team\'s active driver is already assigned to another active response.',
+                    ]);
+                }
             }
             if ($selectedDriver) {
                 $driver = $team->members()->whereKey($selectedDriver->id)->where('status', 'active')->firstOrFail();

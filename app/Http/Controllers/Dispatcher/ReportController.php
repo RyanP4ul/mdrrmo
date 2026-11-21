@@ -92,25 +92,54 @@ class ReportController extends Controller
             'team.members',
             'driver:id,first_name,last_name',
             'form',
-            'parentReport:id,reference,status',
+            'parentReport:id,reference,status,response_team_id',
             'requestedByTeam:id,team_name',
             'assignedVehicle:id,name,plate_number,vehicle_type,status,assigned_report_id',
             'activeDispatchAssignment.vehicle:id,name,plate_number,vehicle_type,status',
         ]);
-        $team = $report->team ?? $this->dispatcher->autoAssignTeam();
+        $isBackup = $report->isBackupRequest();
+        $requestingTeamId = $isBackup
+            ? ($report->requested_by_team_id ?? $report->parentReport?->response_team_id)
+            : null;
+        $team = $report->team ?? $this->dispatcher->autoAssignTeam(
+            ignoreReportId: $report->getKey(),
+            excludeTeamId: $requestingTeamId,
+        );
         $assignedVehicle = $report->assignedVehicle ?? $report->activeDispatchAssignment?->vehicle;
+
+        $activeReportsByTeam = EmergencyReport::query()
+            ->whereIn('status', ['acknowledged', 'dispatched'])
+            ->whereNotNull('response_team_id')
+            ->where('id', '!=', $report->getKey())
+            ->orderByDesc('id')
+            ->get(['response_team_id', 'reference'])
+            ->keyBy('response_team_id');
+        $activeScheduleTeamIds = ServiceSchedule::query()
+            ->whereIn('status', ['en-route', 'on-scene'])
+            ->whereNotNull('response_team_id')
+            ->pluck('response_team_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->all();
+        $busyTeamIds = $this->dispatcher->busyTeamIds($report->getKey());
+        $inUseVehicleIds = $this->dispatcher->inUseVehicleIds($report->getKey(), $isBackup ? $report : null);
+        $excludedVehicleIds = $isBackup ? $this->dispatcher->backupExcludedVehicleIds($report) : [];
 
         $teams = ResponseTeam::query()
             ->where('status', 'active')
             ->with(['vehicles', 'activeVehicle'])
             ->orderBy('team_name')
             ->get()
-            ->map(function (ResponseTeam $t): array {
+            ->map(function (ResponseTeam $t) use ($busyTeamIds, $activeReportsByTeam, $activeScheduleTeamIds, $inUseVehicleIds): array {
                 $defaultVehicle = $t->resolveActiveVehicle();
+                $activeRef = $activeReportsByTeam->get($t->id)?->reference
+                    ?? (in_array($t->id, $activeScheduleTeamIds, true) ? 'Scheduled service' : null);
 
                 return [
                     'id' => $t->id,
                     'team_name' => $t->team_name,
+                    'is_available' => ! in_array($t->id, $busyTeamIds, true),
+                    'active_report_reference' => $activeRef,
                     'default_vehicle' => $defaultVehicle ? [
                         'id' => $defaultVehicle->id,
                         'name' => $defaultVehicle->displayName(),
@@ -118,7 +147,9 @@ class ReportController extends Controller
                         'vehicle_type' => $defaultVehicle->vehicle_type,
                         'vehicle_type_label' => Vehicle::typeLabel($defaultVehicle->vehicle_type),
                         'status' => $defaultVehicle->status,
-                        'is_available' => $defaultVehicle->status === 'available' && $defaultVehicle->assigned_report_id === null,
+                        'is_available' => $defaultVehicle->status === 'available'
+                            && $defaultVehicle->assigned_report_id === null
+                            && ! in_array($defaultVehicle->id, $inUseVehicleIds, true),
                     ] : null,
                 ];
             })
@@ -141,16 +172,19 @@ class ReportController extends Controller
                 'response_team_id' => $v->response_team_id,
                 'team_name' => $v->team?->team_name,
                 'assigned_report_id' => $v->assigned_report_id,
-                'is_available' => $v->status === 'available' && $v->assigned_report_id === null,
+                'is_available' => $v->status === 'available'
+                    && ($v->assigned_report_id === null || $v->assigned_report_id === $report->getKey())
+                    && ! in_array($v->id, $inUseVehicleIds, true),
             ])
             ->values();
 
         return Inertia::render('Dispatcher/Reports/Show', [
             'report' => array_merge($report->toArray(), [
                 'photo_url' => $report->photo_path ? route('dispatcher.reports.photo', $report) : null,
-                'is_backup' => $report->isBackupRequest(),
+                'is_backup' => $isBackup,
                 'requested_vehicle_type' => $report->requested_vehicle_type,
                 'requested_vehicle_label' => Vehicle::typeLabel($report->requested_vehicle_type),
+                'excluded_vehicle_ids' => $excludedVehicleIds,
                 'parent_report' => $report->parentReport ? [
                     'id' => $report->parentReport->id,
                     'reference' => $report->parentReport->reference,

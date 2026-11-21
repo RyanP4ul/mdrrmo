@@ -58,6 +58,8 @@ export default function Show({
   teams: {
     id: number;
     team_name: string;
+    is_available?: boolean;
+    active_report_reference?: string | null;
     default_vehicle?: {
       id: number;
       name: string;
@@ -73,12 +75,18 @@ export default function Show({
   googleMapsApiKey?: string | null;
 }) {
   const [teamId, setTeamId] = useState<string>(String(team?.id ?? ''));
+  const excludedVehicleIds = r.excluded_vehicle_ids ?? [];
   const [vehicleId, setVehicleId] = useState<string>(() => {
-    if (r.assigned_vehicle?.id) return String(r.assigned_vehicle.id);
+    if (r.assigned_vehicle?.id && !excludedVehicleIds.includes(r.assigned_vehicle.id)) {
+      return String(r.assigned_vehicle.id);
+    }
     if (!r.is_backup) return '';
     if (r.requested_vehicle_type) {
       const match = vehicles.find(
-        (v) => v.vehicle_type === r.requested_vehicle_type && (v.is_available || v.assigned_report_id === r.id),
+        (v) =>
+          !excludedVehicleIds.includes(v.id) &&
+          v.vehicle_type === r.requested_vehicle_type &&
+          (v.is_available || v.assigned_report_id === r.id),
       );
       if (match) return String(match.id);
     }
@@ -91,18 +99,51 @@ export default function Show({
     setTeamId(String(team?.id ?? ''));
   }, [team?.id]);
 
+  const getTeamDisabledReason = useCallback(
+    (t: { id: number; is_available?: boolean; active_report_reference?: string | null }) => {
+      if (r.is_backup && r.requested_by_team?.id === t.id) {
+        return 'Requested backup';
+      }
+      if (t.is_available === false && t.id !== r.team?.id) {
+        return t.active_report_reference
+          ? `Dispatched · ${t.active_report_reference}`
+          : 'Already dispatched';
+      }
+      return null;
+    },
+    [r.is_backup, r.requested_by_team?.id, r.team?.id],
+  );
+
+  const sortedTeams = useMemo(
+    () =>
+      [...teams].sort((a, b) => {
+        const aDis = getTeamDisabledReason(a) !== null ? 1 : 0;
+        const bDis = getTeamDisabledReason(b) !== null ? 1 : 0;
+        if (aDis !== bDis) return aDis - bDis;
+        return a.team_name.localeCompare(b.team_name);
+      }),
+    [teams, getTeamDisabledReason],
+  );
+
   const selectableVehicles = useMemo(
-    () => vehicles.filter((v) => v.is_available || v.assigned_report_id === r.id),
-    [vehicles, r.id],
+    () =>
+      vehicles.filter(
+        (v) =>
+          !excludedVehicleIds.includes(v.id) &&
+          (v.is_available || v.assigned_report_id === r.id),
+      ),
+    [vehicles, r.id, excludedVehicleIds],
   );
   const selectedTeamMeta = useMemo(
     () => teams.find((t) => String(t.id) === teamId) ?? null,
     [teams, teamId],
   );
+  const selectedTeamDisabledReason = selectedTeamMeta ? getTeamDisabledReason(selectedTeamMeta) : null;
   const selectedVehicleMeta = useMemo(
-    () => vehicles.find((v) => String(v.id) === vehicleId) ?? null,
-    [vehicles, vehicleId],
+    () => selectableVehicles.find((v) => String(v.id) === vehicleId) ?? null,
+    [selectableVehicles, vehicleId],
   );
+  const canDispatchSelectedTeam = Boolean(selectedTeamMeta && !selectedTeamDisabledReason);
 
   useEffect(
     () => () => {
@@ -428,18 +469,32 @@ export default function Show({
                         <SelectValue placeholder="Choose team" />
                       </SelectTrigger>
                       <SelectContent>
-                        {teams.map((t) => (
-                          <SelectItem key={t.id} value={String(t.id)}>
-                            {t.team_name}
-                          </SelectItem>
-                        ))}
+                        {sortedTeams.map((t) => {
+                          const disabledReason = getTeamDisabledReason(t);
+                          return (
+                            <SelectItem key={t.id} value={String(t.id)} disabled={disabledReason !== null}>
+                              {t.team_name}
+                              {disabledReason ? ` (${disabledReason})` : ''}
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
-                    <Button type="button" onClick={dispatchSelectedTeam} className="shrink-0">
+                    <Button
+                      type="button"
+                      disabled={!canDispatchSelectedTeam}
+                      onClick={dispatchSelectedTeam}
+                      className="shrink-0"
+                    >
                       <Radio aria-hidden="true" />
                       {team?.assigned ? 'Re-assign' : r.is_backup ? 'Dispatch Backup' : 'Dispatch'}
                     </Button>
                   </div>
+                  {selectedTeamDisabledReason && (
+                    <p role="alert" className="text-xs font-medium text-critical">
+                      Cannot dispatch this team ({selectedTeamDisabledReason}).
+                    </p>
+                  )}
                   {r.is_backup && selectableVehicles.length > 0 && (
                     <div className="space-y-1.5 rounded-md border bg-muted/20 p-3">
                       <p className="eyebrow">Vehicle to use for this backup</p>

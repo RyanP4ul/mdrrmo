@@ -84,6 +84,9 @@ class BackupVehicleDispatchTest extends TestCase
         [$teamB, $driverB, $ambB] = $this->createTeamWithDriverAndVehicle(
             'Team B', 'Bravo', 'ambulance', 'Ambulance 02', 'AMB-02',
         );
+        [$teamC, $driverC, $ambC] = $this->createTeamWithDriverAndVehicle(
+            'Team C', 'Charlie', 'ambulance', 'Ambulance 03', 'AMB-03',
+        );
         $towTruck = Vehicle::create([
             'response_team_id' => null,
             'name' => 'Tow Truck 01',
@@ -149,7 +152,7 @@ class BackupVehicleDispatchTest extends TestCase
                     ->where('0.requested_vehicle_label', 'Tow Truck')
                     ->where('0.requested_by_team.team_name', 'Team A')
                     ->etc())
-                ->has('vehicles', 3));
+                ->has('vehicles', 4));
 
         // 3. Dispatcher dispatches Team B with Tow Truck 01 for this backup.
         $this->actingAs($dispatcher, 'web')
@@ -210,7 +213,7 @@ class BackupVehicleDispatchTest extends TestCase
         $this->actingAs($dispatcher, 'web')
             ->post(route('dispatcher.dispatch.store'), [
                 'report_id' => $secondBackup->id,
-                'team_id' => $teamB->id,
+                'team_id' => $teamC->id,
                 'vehicle_id' => $towTruck->id,
             ])
             ->assertSessionHasErrors('vehicle_id');
@@ -266,5 +269,181 @@ class BackupVehicleDispatchTest extends TestCase
         $this->assertNotNull(
             DispatchAssignment::where('emergency_report_id', $backupReport->id)->value('completed_at'),
         );
+    }
+
+    public function test_backup_cannot_use_requesting_team_or_its_vehicle(): void
+    {
+        $dispatcher = DispatcherUser::factory()->create(['status' => 'active']);
+        $incidentType = IncidentType::create([
+            'name' => 'Medical Emergency',
+            'description' => 'Medical',
+            'priority' => 'high',
+            'color' => '#dc2626',
+        ]);
+
+        [$teamA, $driverA, $ambA] = $this->createTeamWithDriverAndVehicle(
+            'Team A', 'Alpha', 'ambulance', 'Ambulance 01', 'AMB-01',
+        );
+        [$teamB, $driverB, $ambB] = $this->createTeamWithDriverAndVehicle(
+            'Team B', 'Bravo', 'ambulance', 'Ambulance 02', 'AMB-02',
+        );
+
+        // Primary dispatch to Team A (note: assigned_report_id stays null on primary dispatch).
+        $incident = EmergencyReport::create([
+            'reference' => 'RPT-2026-PRIM0001',
+            'incident_type_id' => $incidentType->id,
+            'location' => 'Barangay San Juan',
+            'lat' => 14.815,
+            'lng' => 120.909,
+            'description' => 'Patient collapse',
+            'status' => 'pending',
+            'priority' => 'high',
+            'source' => 'emergency-call',
+            'reporter_type' => 'witness',
+            'reporter_name' => 'Caller One',
+            'reported_at' => now()->subMinutes(10),
+        ]);
+        app(\App\Services\DispatchService::class)->dispatch($incident, $teamA);
+        DispatchTrip::create([
+            'emergency_report_id' => $incident->id,
+            'driver_name' => $driverA->full_name,
+            'started_at' => now()->subMinutes(8),
+            'on_scene_at' => now()->subMinutes(2),
+        ]);
+
+        // Team A calls for backup requesting an ambulance.
+        Sanctum::actingAs($driverA, ['*']);
+        $backupRef = $this->withHeader('Idempotency-Key', (string) Str::uuid())
+            ->postJson("/api/driver-responder/assignments/{$incident->id}/backup", [
+                'requested_vehicle_type' => 'ambulance',
+            ])
+            ->assertCreated()
+            ->json('reference');
+        $backupReport = EmergencyReport::where('reference', $backupRef)->firstOrFail();
+
+        // Dashboard payload marks Team A unavailable and excludes Ambulance 01 from backup vehicles.
+        $this->actingAs($dispatcher, 'web')
+            ->get(route('dispatcher.dashboard'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Dispatcher/Dashboard')
+                ->where('incoming.0.reference', $backupRef)
+                ->where('incoming.0.excluded_vehicle_ids', [$ambA->id]));
+
+        // Task 1a: Cannot dispatch Team A to its own backup request.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $backupReport->id,
+                'team_id' => $teamA->id,
+                'vehicle_id' => $ambB->id,
+            ])
+            ->assertSessionHasErrors('team');
+
+        // Task 1b: Cannot dispatch Team B using Team A's in-use Ambulance 01.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $backupReport->id,
+                'team_id' => $teamB->id,
+                'vehicle_id' => $ambA->id,
+            ])
+            ->assertSessionHasErrors('vehicle_id');
+
+        // Dispatching Team B with Team B's available Ambulance 02 succeeds.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $backupReport->id,
+                'team_id' => $teamB->id,
+                'vehicle_id' => $ambB->id,
+            ])
+            ->assertRedirect(route('dispatcher.reports.show', $backupReport));
+
+        $this->assertSame($teamB->id, $backupReport->fresh()->response_team_id);
+        $this->assertSame($backupReport->id, $ambB->fresh()->assigned_report_id);
+    }
+
+    public function test_already_dispatched_team_cannot_be_dispatched_again_until_resolved(): void
+    {
+        $dispatcher = DispatcherUser::factory()->create(['status' => 'active']);
+        $incidentType = IncidentType::create([
+            'name' => 'Fire',
+            'description' => 'Fire incident',
+            'priority' => 'critical',
+            'color' => '#ea580c',
+        ]);
+
+        [$teamA, $driverA, $ambA] = $this->createTeamWithDriverAndVehicle(
+            'Team A', 'Alpha', 'rescue-truck', 'Rescue 01', 'RES-01',
+        );
+        [$teamB, $driverB, $ambB] = $this->createTeamWithDriverAndVehicle(
+            'Team B', 'Bravo', 'rescue-truck', 'Rescue 02', 'RES-02',
+        );
+
+        $makeReport = fn (string $ref) => EmergencyReport::create([
+            'reference' => $ref,
+            'incident_type_id' => $incidentType->id,
+            'location' => 'Main Road',
+            'lat' => 14.81,
+            'lng' => 120.91,
+            'description' => 'Active incident',
+            'status' => 'pending',
+            'priority' => 'critical',
+            'source' => 'emergency-call',
+            'reporter_type' => 'witness',
+            'reporter_name' => 'Caller',
+            'reported_at' => now(),
+        ]);
+
+        $report1 = $makeReport('RPT-2026-DISP0001');
+        $report2 = $makeReport('RPT-2026-DISP0002');
+        $report3 = $makeReport('RPT-2026-DISP0003');
+
+        $service = app(\App\Services\DispatchService::class);
+
+        // Dispatch Team A to Report 1.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $report1->id,
+                'team_id' => $teamA->id,
+            ])
+            ->assertRedirect(route('dispatcher.reports.show', $report1));
+
+        // Task 2: Trying to dispatch Team A again to Report 2 is blocked.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $report2->id,
+                'team_id' => $teamA->id,
+            ])
+            ->assertSessionHasErrors('team');
+
+        // autoAssignTeam skips busy Team A and returns free Team B.
+        $this->assertSame($teamB->id, $service->autoAssignTeam()?->id);
+
+        // Dispatch Team B to Report 2.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $report2->id,
+                'team_id' => $teamB->id,
+            ])
+            ->assertRedirect(route('dispatcher.reports.show', $report2));
+
+        // Now ALL active teams are dispatched -> autoAssignTeam returns null and auto-dispatch rejects Report 3.
+        $this->assertNull($service->autoAssignTeam());
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $report3->id,
+            ])
+            ->assertSessionHasErrors('team');
+
+        // Once Report 1 is resolved, Team A becomes available again and can be dispatched to Report 3.
+        app(\App\Services\EmergencyReportWorkflow::class)->transition($report1->fresh(), 'resolved', $driverA);
+        $this->assertSame($teamA->id, $service->autoAssignTeam()?->id);
+
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $report3->id,
+                'team_id' => $teamA->id,
+            ])
+            ->assertRedirect(route('dispatcher.reports.show', $report3));
+        $this->assertSame($teamA->id, $report3->fresh()->response_team_id);
     }
 }

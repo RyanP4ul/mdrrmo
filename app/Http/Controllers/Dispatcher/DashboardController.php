@@ -21,18 +21,21 @@ class DashboardController extends Controller
     public function index()
     {
         $team = $this->dispatch->autoAssignTeam();
-        $busyTeamIds = EmergencyReport::query()
+        $activeReportsByTeam = EmergencyReport::query()
             ->whereIn('status', ['acknowledged', 'dispatched'])
             ->whereNotNull('response_team_id')
+            ->orderByDesc('id')
+            ->get(['response_team_id', 'reference'])
+            ->keyBy('response_team_id');
+        $activeScheduleTeamIds = ServiceSchedule::query()
+            ->whereIn('status', ['en-route', 'on-scene'])
+            ->whereNotNull('response_team_id')
             ->pluck('response_team_id')
-            ->merge(
-                ServiceSchedule::query()
-                    ->whereIn('status', ['en-route', 'on-scene'])
-                    ->whereNotNull('response_team_id')
-                    ->pluck('response_team_id'),
-            )
+            ->map(fn ($id) => (int) $id)
             ->unique()
             ->all();
+        $busyTeamIds = $this->dispatch->busyTeamIds();
+        $inUseVehicleIds = $this->dispatch->inUseVehicleIds();
 
         $teams = ResponseTeam::query()
             ->where('status', 'active')
@@ -43,7 +46,7 @@ class DashboardController extends Controller
             ])
             ->orderBy('team_name')
             ->get()
-            ->map(function (ResponseTeam $t) use ($busyTeamIds): array {
+            ->map(function (ResponseTeam $t) use ($busyTeamIds, $activeReportsByTeam, $activeScheduleTeamIds, $inUseVehicleIds): array {
                 $onShift = $this->dispatch->onShiftMembers($t);
                 $members = ($onShift->isNotEmpty() ? $onShift : $t->members)
                     ->map(fn ($m): array => [
@@ -53,12 +56,15 @@ class DashboardController extends Controller
                     ])->values()->all();
                 $vehicle = $t->resolveActiveVehicle();
                 $vehicleLabel = $vehicle?->displayName();
+                $activeRef = $activeReportsByTeam->get($t->id)?->reference
+                    ?? (in_array($t->id, $activeScheduleTeamIds, true) ? 'Scheduled service' : null);
 
                 return [
                     'id' => $t->id,
                     'name' => $t->team_name,
                     'shift_team' => $t->shift_team,
                     'is_available' => ! in_array($t->id, $busyTeamIds, true),
+                    'active_report_reference' => $activeRef,
                     'vehicle_name' => $vehicleLabel,
                     'default_vehicle' => $vehicle ? [
                         'id' => $vehicle->id,
@@ -67,7 +73,9 @@ class DashboardController extends Controller
                         'vehicle_type' => $vehicle->vehicle_type,
                         'vehicle_type_label' => Vehicle::typeLabel($vehicle->vehicle_type),
                         'status' => $vehicle->status,
-                        'is_available' => $vehicle->status === 'available' && $vehicle->assigned_report_id === null,
+                        'is_available' => $vehicle->status === 'available'
+                            && $vehicle->assigned_report_id === null
+                            && ! in_array($vehicle->id, $inUseVehicleIds, true),
                     ] : null,
                     'members' => $members,
                 ];
@@ -91,7 +99,9 @@ class DashboardController extends Controller
                 'response_team_id' => $v->response_team_id,
                 'team_name' => $v->team?->team_name,
                 'assigned_report_id' => $v->assigned_report_id,
-                'is_available' => $v->status === 'available' && $v->assigned_report_id === null,
+                'is_available' => $v->status === 'available'
+                    && $v->assigned_report_id === null
+                    && ! in_array($v->id, $inUseVehicleIds, true),
             ])
             ->values();
 
@@ -102,7 +112,7 @@ class DashboardController extends Controller
             'incoming' => EmergencyReport::with([
                 'incidentType:id,name,color',
                 'team:id,team_name',
-                'parentReport:id,reference,status',
+                'parentReport:id,reference,status,response_team_id',
                 'requestedByTeam:id,team_name',
                 'assignedVehicle:id,name,plate_number,vehicle_type,status,assigned_report_id',
                 'activeDispatchAssignment.vehicle:id,name,plate_number,vehicle_type,status',
@@ -111,12 +121,14 @@ class DashboardController extends Controller
                 ->orderByRaw("status = 'pending' desc")->latest('reported_at')->orderByDesc('id')->get()
                 ->map(function (EmergencyReport $report): array {
                     $assignedVehicle = $report->assignedVehicle ?? $report->activeDispatchAssignment?->vehicle;
+                    $isBackup = $report->isBackupRequest();
 
                     return array_merge($report->toArray(), [
                         'photo_url' => $report->photo_path ? route('dispatcher.reports.photo', $report) : null,
-                        'is_backup' => $report->isBackupRequest(),
+                        'is_backup' => $isBackup,
                         'requested_vehicle_type' => $report->requested_vehicle_type,
                         'requested_vehicle_label' => Vehicle::typeLabel($report->requested_vehicle_type),
+                        'excluded_vehicle_ids' => $isBackup ? $this->dispatch->backupExcludedVehicleIds($report) : [],
                         'parent_report' => $report->parentReport ? [
                             'id' => $report->parentReport->id,
                             'reference' => $report->parentReport->reference,
@@ -142,6 +154,7 @@ class DashboardController extends Controller
                 'id' => $team->id,
                 'name' => $team->team_name,
                 'is_available' => ! in_array($team->id, $busyTeamIds, true),
+                'active_report_reference' => $activeReportsByTeam->get($team->id)?->reference,
                 'vehicle_name' => $autoVehicleLabel,
                 'default_vehicle' => $autoVehicle ? [
                     'id' => $autoVehicle->id,
@@ -150,7 +163,9 @@ class DashboardController extends Controller
                     'vehicle_type' => $autoVehicle->vehicle_type,
                     'vehicle_type_label' => Vehicle::typeLabel($autoVehicle->vehicle_type),
                     'status' => $autoVehicle->status,
-                    'is_available' => $autoVehicle->status === 'available' && $autoVehicle->assigned_report_id === null,
+                    'is_available' => $autoVehicle->status === 'available'
+                        && $autoVehicle->assigned_report_id === null
+                        && ! in_array($autoVehicle->id, $inUseVehicleIds, true),
                 ] : null,
                 'members' => $this->dispatch->onShiftMembers($team)->map->only('id', 'name', 'role')->values(),
             ] : null,

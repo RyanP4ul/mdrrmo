@@ -856,4 +856,54 @@ class AdminOperationsPdfReportTest extends TestCase
             ->assertOk()
             ->assertHeader('Content-Type', 'application/pdf');
     }
+
+    public function test_operations_report_includes_endorsed_by_and_endorsed_to_from_emergency_form(): void
+    {
+        CarbonImmutable::setTestNow(CarbonImmutable::create(2026, 11, 15, 10, 0, 0, 'Asia/Manila'));
+
+        $admin = AdminUser::factory()->create();
+        $medical = $this->createIncidentType('Medical Emergency', 'high');
+        $er = $this->createEmergencyReport($medical, [
+            'reference' => 'RPT-ENDORSE-01',
+            'reported_at' => CarbonImmutable::create(2026, 11, 10, 9, 0, 0, 'Asia/Manila')->utc(),
+        ]);
+
+        ReportForm::create([
+            'emergency_report_id' => $er->id,
+            'driver_section' => [],
+            'emergency_section' => [
+                'patientName' => 'Elena Santos',
+                'sex' => 'Female',
+                'typeOfIncident' => 'Medical',
+                'endorsedBy' => [
+                    'name' => 'Responder Juan',
+                    'time' => '09:35',
+                    'date' => '2026-11-10',
+                ],
+                'endorsedTo' => [
+                    'name' => 'Nurse Maria',
+                    'time' => '09:40',
+                    'date' => '2026-11-10',
+                ],
+            ],
+        ]);
+
+        $report = app(EmergencyOperationsReportService::class)->buildReport(
+            ['period_type' => 'weekly', 'week_date' => '2026-11-12'],
+            $admin,
+            true,
+            CarbonImmutable::now('Asia/Manila')
+        );
+
+        $incident = collect($report['incidents'])->firstWhere('incident_ref', 'RPT-ENDORSE-01');
+        $patient = collect($report['patients'])->firstWhere('incident_ref', 'RPT-ENDORSE-01');
+
+        $this->assertSame('Responder Juan (2026-11-10 09:35)', $incident['endorsed_by']);
+        $this->assertSame('Nurse Maria (2026-11-10 09:40)', $incident['endorsed_to']);
+        $this->assertSame('By: Responder Juan (2026-11-10 09:35) | To: Nurse Maria (2026-11-10 09:40)', $patient['hospital_endorsement']);
+
+        $html = view('reports.emergency-operations-pdf', ['report' => $report])->render();
+        $this->assertStringContainsString('Responder Juan (2026-11-10 09:35)', $html);
+        $this->assertStringContainsString('Nurse Maria (2026-11-10 09:40)', $html);
+    }
 }

@@ -92,6 +92,7 @@ export interface EmergencyReport {
     is_backup?: boolean;
     requested_vehicle_type?: string | null;
     requested_vehicle_label?: string | null;
+    excluded_vehicle_ids?: number[];
     parent_report?: { id: number; reference: string; status: string } | null;
     requested_by_team?: { id: number; team_name: string } | null;
     assigned_vehicle?: {

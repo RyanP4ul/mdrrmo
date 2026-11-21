@@ -39,6 +39,7 @@ interface TeamOption {
   name: string;
   shift_team?: 'day' | 'night' | null;
   is_available?: boolean;
+  active_report_reference?: string | null;
   vehicle_name?: string | null;
   default_vehicle?: DefaultVehicleSummary | null;
   members: { id: number; name: string; role: string | null }[];
@@ -67,6 +68,7 @@ interface Report {
   is_backup?: boolean;
   requested_vehicle_type?: string | null;
   requested_vehicle_label?: string | null;
+  excluded_vehicle_ids?: number[];
   parent_report?: { id: number; reference: string; status: string } | null;
   requested_by_team?: { id: number; team_name: string } | null;
   assigned_vehicle?: {
@@ -93,6 +95,31 @@ function VehicleTypeIcon({ type, className = 'size-5' }: { type?: string | null;
   return <Truck className={className} aria-hidden="true" />;
 }
 
+function getTeamDisabledReason(team: TeamOption, selected: Report | null): string | null {
+  if (selected?.is_backup && selected.requested_by_team?.id === team.id) {
+    return 'Requested backup';
+  }
+  if (team.is_available === false && team.id !== selected?.response_team_id) {
+    return team.active_report_reference
+      ? `Dispatched · ${team.active_report_reference}`
+      : 'Already dispatched';
+  }
+  return null;
+}
+
+function isVehicleEligibleForBackup(
+  vehicle: DispatchVehicleOption,
+  selectedReport: Report | null,
+): boolean {
+  if (selectedReport?.excluded_vehicle_ids?.includes(vehicle.id)) {
+    return false;
+  }
+  return Boolean(
+    vehicle.is_available ||
+      (selectedReport != null && vehicle.assigned_report_id === selectedReport.id),
+  );
+}
+
 function resolveRecommendedBackupVehicleId(
   selectedReport: Report | null,
   selectedTeam: TeamOption | null,
@@ -100,33 +127,35 @@ function resolveRecommendedBackupVehicleId(
 ): string {
   if (!selectedReport?.is_backup) return '';
 
-  if (selectedReport.assigned_vehicle?.id) {
+  const excludedIds = selectedReport.excluded_vehicle_ids ?? [];
+  if (selectedReport.assigned_vehicle?.id && !excludedIds.includes(selectedReport.assigned_vehicle.id)) {
     return String(selectedReport.assigned_vehicle.id);
   }
 
+  const eligibleVehicles = vehicles.filter((v) => isVehicleEligibleForBackup(v, selectedReport));
   const requestedType = selectedReport.requested_vehicle_type;
   const teamDefault = selectedTeam?.default_vehicle ?? null;
+  const teamDefaultEligible =
+    teamDefault != null &&
+    teamDefault.is_available &&
+    !excludedIds.includes(teamDefault.id);
 
   if (requestedType) {
-    if (teamDefault && teamDefault.vehicle_type === requestedType && teamDefault.is_available) {
+    if (teamDefaultEligible && teamDefault.vehicle_type === requestedType) {
       return String(teamDefault.id);
     }
 
-    const matchingVehicle = vehicles.find(
-      (v) =>
-        v.vehicle_type === requestedType &&
-        (v.is_available || v.assigned_report_id === selectedReport.id),
-    );
+    const matchingVehicle = eligibleVehicles.find((v) => v.vehicle_type === requestedType);
     if (matchingVehicle) {
       return String(matchingVehicle.id);
     }
   }
 
-  if (teamDefault && teamDefault.is_available) {
+  if (teamDefaultEligible) {
     return String(teamDefault.id);
   }
 
-  const anyAvailable = vehicles.find((v) => v.is_available || v.assigned_report_id === selectedReport.id);
+  const anyAvailable = eligibleVehicles[0];
   return anyAvailable ? String(anyAvailable.id) : '';
 }
 
@@ -141,10 +170,11 @@ function pickInitialBackupTeamId(selected: Report | null, autoTeam: TeamOption |
   );
   if (availableCandidate) return String(availableCandidate.id);
 
-  if (autoTeam && autoTeam.id !== requestingTeamId) return String(autoTeam.id);
+  if (autoTeam && autoTeam.is_available !== false && autoTeam.id !== requestingTeamId) {
+    return String(autoTeam.id);
+  }
 
-  const anyOtherTeam = teams.find((t) => t.id !== requestingTeamId);
-  return anyOtherTeam ? String(anyOtherTeam.id) : 'auto';
+  return '';
 }
 
 function DispatchForm({
@@ -203,7 +233,9 @@ function DispatchForm({
   const selectedTeamOption =
     form.data.team_id === 'auto'
       ? autoTeam
-      : (teams.find((t) => String(t.id) === form.data.team_id) ?? autoTeam);
+      : form.data.team_id
+      ? (teams.find((t) => String(t.id) === form.data.team_id) ?? null)
+      : null;
 
   // Automatically re-check the backup vehicle whenever the dispatcher selects a team.
   useEffect(() => {
@@ -213,31 +245,27 @@ function DispatchForm({
   }, [isBackup, selected?.id, form.data.team_id]);
 
   const selectableVehicles = useMemo(
-    () =>
-      vehicles.filter(
-        (v) => v.is_available || (selected != null && v.assigned_report_id === selected.id),
-      ),
-    [vehicles, selected?.id],
+    () => vehicles.filter((v) => isVehicleEligibleForBackup(v, selected)),
+    [vehicles, selected?.id, selected?.excluded_vehicle_ids],
   );
 
   const selectedBackupVehicle = useMemo(
-    () => vehicles.find((v) => String(v.id) === vehicleId) ?? null,
-    [vehicles, vehicleId],
+    () => selectableVehicles.find((v) => String(v.id) === vehicleId) ?? null,
+    [selectableVehicles, vehicleId],
   );
 
   const sortedTeams = useMemo(() => {
-    if (!isBackup) return teams;
-    const requestingId = selected?.requested_by_team?.id ?? null;
     return [...teams].sort((a, b) => {
-      const aReq = a.id === requestingId ? 1 : 0;
-      const bReq = b.id === requestingId ? 1 : 0;
-      if (aReq !== bReq) return aReq - bReq;
-      const aAvail = a.is_available === false ? 1 : 0;
-      const bAvail = b.is_available === false ? 1 : 0;
-      if (aAvail !== bAvail) return aAvail - bAvail;
+      const aDisabled = getTeamDisabledReason(a, selected) !== null ? 1 : 0;
+      const bDisabled = getTeamDisabledReason(b, selected) !== null ? 1 : 0;
+      if (aDisabled !== bDisabled) return aDisabled - bDisabled;
       return a.name.localeCompare(b.name);
     });
-  }, [teams, isBackup, selected?.requested_by_team?.id]);
+  }, [teams, selected]);
+
+  const selectedTeamDisabledReason = selectedTeamOption
+    ? getTeamDisabledReason(selectedTeamOption, selected)
+    : null;
 
   const isTemporaryVehicleChange = Boolean(
     isBackup &&
@@ -253,8 +281,12 @@ function DispatchForm({
   );
 
   const canDispatchTeam = isBackup
-    ? Boolean(selectedTeamOption && (selectedBackupVehicle || selectedTeamOption.vehicle_name))
-    : Boolean(selectedTeamOption);
+    ? Boolean(
+        selectedTeamOption &&
+          !selectedTeamDisabledReason &&
+          selectedBackupVehicle,
+      )
+    : Boolean(selectedTeamOption && !selectedTeamDisabledReason && selectedTeamOption.vehicle_name);
 
   const handleDispatch = () => {
     const chosenTeamId = form.data.team_id === 'auto' || !form.data.team_id ? null : Number(form.data.team_id);
@@ -353,13 +385,16 @@ function DispatchForm({
                   <SelectValue placeholder="Choose available team" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sortedTeams.map((t) => (
-                    <SelectItem key={t.id} value={String(t.id)}>
-                      {t.name}
-                      {t.is_available === false ? ' (Busy)' : ' (Available)'}
-                      {t.vehicle_name ? ` · Default: ${t.vehicle_name}` : ''}
-                    </SelectItem>
-                  ))}
+                  {sortedTeams.map((t) => {
+                    const disabledReason = getTeamDisabledReason(t, selected);
+                    return (
+                      <SelectItem key={t.id} value={String(t.id)} disabled={disabledReason !== null}>
+                        {t.name}
+                        {disabledReason ? ` (${disabledReason})` : ' (Available)'}
+                        {!disabledReason && t.vehicle_name ? ` · Default: ${t.vehicle_name}` : ''}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </Field>
@@ -398,7 +433,7 @@ function DispatchForm({
               </div>
             ) : (
               <div className="rounded-md border border-warning/30 bg-warning-soft p-3 text-xs text-warning">
-                No active response team available.{' '}
+                No other available response team is free for backup right now. All eligible teams are currently dispatched.{' '}
                 <Link href="/dispatcher/responders" className="font-medium underline underline-offset-2">
                   Review response teams
                 </Link>
@@ -602,27 +637,45 @@ function DispatchForm({
                 <SelectValue placeholder="Choose response team" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="auto">
-                  {autoTeam ? `Auto-assign (${autoTeam.name})` : 'Auto-assign (Recommended)'}
+                <SelectItem value="auto" disabled={!autoTeam}>
+                  {autoTeam ? `Auto-assign (${autoTeam.name})` : 'Auto-assign (No available team)'}
                 </SelectItem>
-                {teams.map((t) => (
-                  <SelectItem key={t.id} value={String(t.id)}>
-                    {t.name}
-                    {t.vehicle_name ? ` · ${t.vehicle_name}` : ''}
-                    {t.shift_team ? ` (${t.shift_team === 'night' ? 'Night' : 'Day'})` : ''}
-                  </SelectItem>
-                ))}
+                {sortedTeams.map((t) => {
+                  const disabledReason = getTeamDisabledReason(t, selected);
+                  return (
+                    <SelectItem key={t.id} value={String(t.id)} disabled={disabledReason !== null}>
+                      {t.name}
+                      {disabledReason
+                        ? ` (${disabledReason})`
+                        : `${t.vehicle_name ? ` · ${t.vehicle_name}` : ''}${t.shift_team ? ` (${t.shift_team === 'night' ? 'Night' : 'Day'})` : ''}`}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </Field>
-          <div className={cn('rounded-md border p-3.5 text-sm', selectedTeamOption && selectedTeamOption.vehicle_name ? 'border-ok/30 bg-ok-soft' : 'border-warning/30 bg-warning-soft')}>
-            <p className={cn('flex items-center gap-2 font-medium', selectedTeamOption && selectedTeamOption.vehicle_name ? 'text-ok' : 'text-warning')}>
+          <div className={cn('rounded-md border p-3.5 text-sm', selectedTeamOption && !selectedTeamDisabledReason && selectedTeamOption.vehicle_name ? 'border-ok/30 bg-ok-soft' : 'border-warning/30 bg-warning-soft')}>
+            <p className={cn('flex items-center gap-2 font-medium', selectedTeamOption && !selectedTeamDisabledReason && selectedTeamOption.vehicle_name ? 'text-ok' : 'text-warning')}>
               <Users className="size-4" aria-hidden="true" />
               {selectedTeamOption
                 ? `${form.data.team_id === 'auto' ? 'Auto-assigned' : 'Selected team'}: ${selectedTeamOption.name}`
+                : teams.some((t) => t.is_available === false)
+                ? 'All active response teams are currently dispatched'
                 : 'No team with an active driver/responder and assigned vehicle available'}
             </p>
-            {!selectedTeamOption && <p className="mt-1.5 text-xs text-foreground/80">A response team must have active members and an assigned vehicle before dispatching. <Link href="/dispatcher/responders" className="font-medium text-primary underline underline-offset-2">Review response teams</Link></p>}
+            {!selectedTeamOption && (
+              <p className="mt-1.5 text-xs text-foreground/80">
+                {teams.some((t) => t.is_available === false)
+                  ? 'Wait for a dispatched team to complete its active response before dispatching again.'
+                  : 'A response team must have active members and an assigned vehicle before dispatching.'}{' '}
+                <Link href="/dispatcher/responders" className="font-medium text-primary underline underline-offset-2">Review response teams</Link>
+              </p>
+            )}
+            {selectedTeamDisabledReason && (
+              <p role="alert" className="mt-1 text-xs font-medium text-critical">
+                This team cannot be dispatched right now ({selectedTeamDisabledReason}).
+              </p>
+            )}
             {selectedTeamOption && !selectedTeamOption.vehicle_name && (
               <p role="alert" className="mt-1 text-xs font-medium text-critical">
                 {selectedTeamOption.name} needs an assigned vehicle first before it can be dispatched.

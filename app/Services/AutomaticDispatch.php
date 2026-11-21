@@ -50,6 +50,9 @@ class AutomaticDispatch
                 ->where(fn ($q) => $q->whereJsonContains('specializations', $report->incidentType->name)->orWhereJsonContains('specializations', '*'))
                 ->orderBy('id')->lockForUpdate()->get();
             foreach ($teams as $team) {
+                if (EmergencyReport::where('response_team_id', $team->id)->whereIn('status', ['acknowledged', 'dispatched'])->exists()) {
+                    continue;
+                }
                 if (! $team->vehicles()->where('status', '!=', 'maintenance')->exists()) {
                     continue;
                 }

@@ -323,6 +323,7 @@ class EmergencyOperationsReportService
             $typeOfEmergency = $this->cleanText($report->incidentType?->name)
                 ?? $this->cleanText($emergencySection['typeOfIncident'] ?? null)
                 ?? $categoryName;
+            $endorsement = $this->extractEndorsementSummary($emergencySection);
 
             $incidentRows[] = [
                 'id' => $report->id,
@@ -333,6 +334,9 @@ class EmergencyOperationsReportService
                 'address' => $sectionTwoAddress,
                 'contact' => $sectionTwoContact,
                 'date_time' => $reportedAtDisplay,
+                'endorsed_by' => $endorsement['endorsed_by'],
+                'endorsed_to' => $endorsement['endorsed_to'],
+                'hospital_endorsement' => $endorsement['summary'],
                 'category' => $categoryName,
                 'priority' => $priority,
                 'location' => $locationDisplay,
@@ -1006,6 +1010,7 @@ class EmergencyOperationsReportService
         $allergiesRaw = $this->cleanText($emergencySection['allergies'] ?? null);
         $medsRaw = $this->cleanText($emergencySection['medications'] ?? null);
         $assessmentRaw = $this->cleanText($emergencySection['assessmentComment'] ?? null);
+        $endorsement = $this->extractEndorsementSummary($emergencySection);
 
         $hasFormPatientData = $patientNameRaw !== null
             || $ageRaw !== null
@@ -1014,7 +1019,8 @@ class EmergencyOperationsReportService
             || $treatmentRaw !== null
             || $vitalParts !== []
             || $allergiesRaw !== null
-            || $medsRaw !== null;
+            || $medsRaw !== null
+            || $endorsement['has_data'];
 
         $victimNote = $fields['victim_symptoms'];
 
@@ -1061,7 +1067,9 @@ class EmergencyOperationsReportService
                 'first_aid_and_treatment' => self::NOT_RECORDED,
                 'transport_status' => $transportStatus,
                 'hospital_destination' => $destination,
-                'hospital_endorsement' => self::NOT_RECORDED,
+                'endorsed_by' => $endorsement['endorsed_by'],
+                'endorsed_to' => $endorsement['endorsed_to'],
+                'hospital_endorsement' => $endorsement['summary'],
                 'remarks' => 'Initial report note only.',
             ]];
         }
@@ -1076,9 +1084,57 @@ class EmergencyOperationsReportService
             'first_aid_and_treatment' => $treatmentRaw ?? self::NOT_RECORDED,
             'transport_status' => $transportStatus,
             'hospital_destination' => $destination,
-            'hospital_endorsement' => self::NOT_RECORDED,
+            'endorsed_by' => $endorsement['endorsed_by'],
+            'endorsed_to' => $endorsement['endorsed_to'],
+            'hospital_endorsement' => $endorsement['summary'],
             'remarks' => $remarkParts !== [] ? implode(' | ', $remarkParts) : self::NOT_RECORDED,
         ]];
+    }
+
+    /**
+     * Format Endorsed By / Endorsed To entries from an emergency form section.
+     *
+     * @param  array<string, mixed>  $emergencySection
+     * @return array{endorsed_by: string, endorsed_to: string, summary: string, has_data: bool}
+     */
+    private function extractEndorsementSummary(array $emergencySection): array
+    {
+        $formatParty = function (mixed $raw): ?string {
+            if (! is_array($raw)) {
+                return null;
+            }
+            $name = $this->cleanText($raw['name'] ?? null);
+            $date = $this->cleanText($raw['date'] ?? null);
+            $time = $this->cleanText($raw['time'] ?? null);
+            $when = implode(' ', array_filter([$date, $time]));
+
+            if ($name === null && $when === '') {
+                return null;
+            }
+            if ($name !== null && $when !== '') {
+                return "{$name} ({$when})";
+            }
+
+            return $name ?? $when;
+        };
+
+        $by = $formatParty($emergencySection['endorsedBy'] ?? null);
+        $to = $formatParty($emergencySection['endorsedTo'] ?? null);
+
+        $parts = [];
+        if ($by !== null) {
+            $parts[] = 'By: '.$by;
+        }
+        if ($to !== null) {
+            $parts[] = 'To: '.$to;
+        }
+
+        return [
+            'endorsed_by' => $by ?? self::NOT_RECORDED,
+            'endorsed_to' => $to ?? self::NOT_RECORDED,
+            'summary' => $parts !== [] ? implode(' | ', $parts) : self::NOT_RECORDED,
+            'has_data' => $parts !== [],
+        ];
     }
 
     /**

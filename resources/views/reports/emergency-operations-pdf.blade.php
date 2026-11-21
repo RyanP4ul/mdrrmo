@@ -374,12 +374,13 @@
         <table class="formal fixed compact">
             <thead>
                 <tr>
-                    <th style="width: 20%;">Name</th>
-                    <th class="center" style="width: 6%;">Age</th>
-                    <th style="width: 16%;">Type Of Emergency</th>
-                    <th style="width: 25%;">Address</th>
-                    <th style="width: 15%;">Contact</th>
-                    <th style="width: 18%;">Date &amp; Time</th>
+                    <th style="width: 17%;">Name</th>
+                    <th class="center" style="width: 5%;">Age</th>
+                    <th style="width: 14%;">Type Of Emergency</th>
+                    <th style="width: 21%;">Address</th>
+                    <th style="width: 12%;">Contact</th>
+                    <th style="width: 14%;">Date &amp; Time</th>
+                    <th style="width: 17%;">Endorsement</th>
                 </tr>
             </thead>
             <tbody>
@@ -391,6 +392,18 @@
                         <td>{{ $incident['address'] }}</td>
                         <td>{{ $incident['contact'] }}</td>
                         <td>{{ $incident['date_time'] }}</td>
+                        <td>
+                            @if(($incident['endorsed_by'] ?? '—') !== '—' || ($incident['endorsed_to'] ?? '—') !== '—')
+                                @if(($incident['endorsed_by'] ?? '—') !== '—')
+                                    <div><span class="subtext">By:</span> {{ $incident['endorsed_by'] }}</div>
+                                @endif
+                                @if(($incident['endorsed_to'] ?? '—') !== '—')
+                                    <div><span class="subtext">To:</span> {{ $incident['endorsed_to'] }}</div>
+                                @endif
+                            @else
+                                —
+                            @endif
+                        </td>
                     </tr>
                 @endforeach
             </tbody>
