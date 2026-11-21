@@ -7,8 +7,10 @@ use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
 use App\Models\ResponseTeam;
 use App\Models\ServiceSchedule;
+use App\Models\TeamMember;
 use App\Models\Vehicle;
 use App\Support\Audit;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
@@ -40,6 +42,7 @@ class TeamRoles
             ->orderBy('id')->get()->map(function (ResponseTeam $team) use ($user): array {
                 $self = $team->members->first(fn ($member) => $member->user_id === $user->id && $member->status === 'active');
                 $driver = $team->members->first(fn ($member) => strtolower((string) $member->role) === 'driver');
+                $pair = $this->activePair($team->members);
                 $activeVehicle = $team->resolveActiveVehicle();
                 $activeVehicleId = $activeVehicle?->id;
                 $vehicles = $team->vehicles
@@ -54,7 +57,8 @@ class TeamRoles
                     'role' => strtolower((string) $self->role) === 'driver' ? 'Driver' : 'Responder',
                     'driver_member_id' => $driver?->id,
                     'driver_name' => $driver?->user?->full_name ?? $driver?->name,
-                    'can_be_driver' => $driver === null || $driver->id === $self->id,
+                    'can_be_driver' => $pair !== null || $driver === null || $driver->id === $self->id,
+                    'can_swap_roles' => $pair !== null,
                     'locked' => $this->busy($team),
                     'active_vehicle_id' => $activeVehicleId,
                     'active_vehicle' => $activeVehicle?->toTeamPayload($activeVehicleId),
@@ -67,7 +71,24 @@ class TeamRoles
     {
         DB::transaction(function () use ($team, $user, $role): void {
             $team = ResponseTeam::whereKey($team->id)->where('status', 'active')->lockForUpdate()->firstOrFail();
-            $member = $team->members()->where('user_id', $user->id)->where('status', 'active')->orderBy('id')->lockForUpdate()->firstOrFail();
+            $members = $team->members()->with('user')->orderBy('id')->lockForUpdate()->get();
+            $member = $members->first(fn (TeamMember $row): bool => $row->user_id === $user->id && $row->status === 'active');
+            abort_unless($member, 404);
+            $pair = $this->activePair($members);
+            if ($pair !== null) {
+                $partner = $pair->firstWhere('id', '!=', $member->id);
+                $driver = $role === 'Driver' ? $member : $partner;
+                if ($member->role === $role && $partner->role === ($role === 'Driver' ? 'Responder' : 'Driver') && $team->member_roles_enabled) {
+                    return;
+                }
+                $this->ensureIdle($team);
+                $this->writeDriver($team, $driver);
+                $pair->where('id', '!=', $driver->id)->first()->update(['role' => 'Responder']);
+                Audit::record('CHANGE_TEAM_ROLE', "Team {$team->id} swapped Driver and Responder roles");
+                TeamRoleUpdated::dispatch($team->id);
+
+                return;
+            }
             if ($member->role === $role && $team->member_roles_enabled) {
                 return;
             }
@@ -117,18 +138,49 @@ class TeamRoles
         DB::transaction(function () use ($team, $driverUserId): void {
             $team = ResponseTeam::whereKey($team->id)->lockForUpdate()->firstOrFail();
             $current = $team->members()->whereRaw("LOWER(role) = 'driver'")->first();
-            if ($current?->user_id !== $driverUserId) {
+            $pair = $this->activePair($team->members()->with('user')->orderBy('id')->get());
+            if ($driverUserId === null && $pair !== null) {
+                $driverUserId = ($pair->firstWhere('id', $current?->id) ?? $pair->first())->user_id;
+            }
+            $partner = $pair?->firstWhere('user_id', '!=', $driverUserId);
+            if ($current?->user_id !== $driverUserId || ($partner !== null && $partner->role !== 'Responder')) {
                 $this->ensureIdle($team);
             }
             $target = $driverUserId === null ? null : $team->members()->where('user_id', $driverUserId)->where('status', 'active')
                 ->whereHas('user', fn ($query) => $query->where('status', 'active'))->firstOrFail();
-            $team->members()->whereRaw("LOWER(role) = 'driver'")->update(['role' => 'Responder']);
-            if ($target) {
-                $team->members()->whereKey($target->id)->update(['role' => 'Driver']);
-            }
-            $team->members()->whereIn('role', ['Driver/Responder', 'driver/responder'])->update(['role' => 'Responder']);
-            $team->update(['member_roles_enabled' => true]);
+            $this->writeDriver($team, $target);
+            $partner?->update(['role' => 'Responder']);
             TeamRoleUpdated::dispatch($team->id);
         }, 3);
+    }
+
+    public function normalizePair(ResponseTeam $team): void
+    {
+        $pair = $this->activePair($team->members()->with('user')->orderBy('id')->get());
+        if ($team->status === 'active' && $pair !== null && ! $this->busy($team)
+            && (! $team->member_roles_enabled || $pair->pluck('role')->sort()->values()->all() !== ['Driver', 'Responder'])) {
+            $this->reassign($team, null);
+        }
+    }
+
+    private function activePair(Collection $members): ?Collection
+    {
+        $active = $members->where('status', 'active')->values();
+        if ($active->count() !== 2 || $active->pluck('user_id')->unique()->count() !== 2
+            || ! $active->every(fn (TeamMember $member): bool => $member->user?->status === 'active')) {
+            return null;
+        }
+
+        return $active;
+    }
+
+    private function writeDriver(ResponseTeam $team, ?TeamMember $driver): void
+    {
+        $team->members()->whereRaw("LOWER(role) = 'driver'")->update(['role' => 'Responder']);
+        $team->members()->whereIn('role', ['Driver/Responder', 'driver/responder'])->update(['role' => 'Responder']);
+        if ($driver !== null) {
+            $team->members()->whereKey($driver->id)->update(['role' => 'Driver']);
+        }
+        $team->update(['member_roles_enabled' => true]);
     }
 }

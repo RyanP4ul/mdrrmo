@@ -15,10 +15,26 @@ use App\Support\Audit;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class ServiceScheduleWorkflow
 {
+    public static function bookingFields(): array
+    {
+        return [
+            'service_type' => ['required', Rule::in([...ServiceSchedule::REQUEST_TYPES, ...ServiceSchedule::LEGACY_TYPES])],
+            'service_details' => ['exclude_unless:service_type,Others', 'required', 'string', 'max:255'],
+            'address' => ['required', 'string', 'max:255'],
+            'destination_address' => ['required_with:destination_lat,destination_lng', 'nullable', 'string', 'max:255'],
+            'pickup_lat' => ['required_with:pickup_lng', 'nullable', 'numeric', 'between:-90,90'],
+            'pickup_lng' => ['required_with:pickup_lat', 'nullable', 'numeric', 'between:-180,180'],
+            'destination_lat' => ['required_with:destination_lng', 'nullable', 'numeric', 'between:-90,90'],
+            'destination_lng' => ['required_with:destination_lat', 'nullable', 'numeric', 'between:-180,180'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ];
+    }
+
     public function create(ResidentUser $resident, array $data): ServiceSchedule
     {
         return DB::transaction(function () use ($resident, $data): ServiceSchedule {
@@ -103,6 +119,32 @@ class ServiceScheduleWorkflow
         }, 3);
     }
 
+    public function canControlTrip(?ResponseTeam $team, User $actor): bool
+    {
+        if (! $team || $team->status !== 'active') {
+            return false;
+        }
+
+        $member = $team->members()
+            ->where('user_id', $actor->getKey())
+            ->where('status', 'active')
+            ->first();
+
+        if (! $member) {
+            return false;
+        }
+
+        $role = strtolower(trim((string) ($member->role ?? '')));
+        if ($role === 'responder') {
+            return false;
+        }
+
+        $requiresExplicitDriver = $team->member_roles_enabled
+            || $team->members()->where('status', 'active')->whereIn('role', ['Driver', 'driver'])->exists();
+
+        return $requiresExplicitDriver ? $role === 'driver' : true;
+    }
+
     public function progress(ServiceSchedule $schedule, User $actor, string $status): ServiceSchedule
     {
         return DB::transaction(function () use ($schedule, $actor, $status): ServiceSchedule {
@@ -111,6 +153,14 @@ class ServiceScheduleWorkflow
             if ($record->status === $status) {
                 return $record;
             }
+            $team = ResponseTeam::whereKey($record->response_team_id)->where('status', 'active')->lockForUpdate()->first();
+            $this->ensure(
+                $this->canControlTrip($team, $actor),
+                'status',
+                $status === 'en-route'
+                    ? 'Only the team Driver can start a service trip.'
+                    : 'Only the team Driver can update a service trip.',
+            );
             if ($status === 'completed') {
                 return $this->finish($record);
             }
@@ -118,10 +168,6 @@ class ServiceScheduleWorkflow
             $this->ensure(isset($expected[$status]) && $record->status === $expected[$status], 'status', 'Refresh this service before changing its status.');
             $this->ensure($record->preferred_date->toDateString() <= now(config('mobile.timezone'))->toDateString(), 'status', 'This service is scheduled for a future date.');
             if ($status === 'en-route') {
-                $team = ResponseTeam::whereKey($record->response_team_id)->where('status', 'active')->lockForUpdate()->firstOrFail();
-                if ($team->member_roles_enabled) {
-                    $this->ensure($team->members()->where('user_id', $actor->id)->where('status', 'active')->where('role', 'Driver')->exists(), 'status', 'Only the team Driver can start a service trip.');
-                }
                 $responders = $record->responders()->pluck('drivers.id');
                 DriverResponderUser::whereIn('id', $responders)->orderBy('id')->lockForUpdate()->get();
                 $this->ensure(! EmergencyReport::whereIn('assigned_driver_id', $responders)->whereIn('status', ['acknowledged', 'dispatched'])->exists(), 'status', 'A responder has an active emergency assignment. Complete it before starting this service.');

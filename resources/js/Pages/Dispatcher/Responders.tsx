@@ -23,7 +23,7 @@ import type { Paginated } from '@/types';
 type ShiftTeamType = 'day' | 'night';
 interface Member { id?: number; user_id?: number | null; name: string; role: string | null; status?: string }
 interface Driver { id: number; name: string; shift_team?: ShiftTeamType | null }
-interface VehicleOption { id: number; name: string; plate_number: string; vehicle_type: string; status: string; response_team_id?: number | null; team_name?: string | null }
+interface VehicleOption { id: number; name: string; plate_number: string; vehicle_type: string; status: string; assignable: boolean; response_team_id?: number | null; team_name?: string | null }
 interface Shift { id: number; start_time: string; end_time: string; status: string; members: Member[] }
 interface Team { id: number; team_name: string; status: string; shift_team?: ShiftTeamType | null; vehicle_id?: number | null; vehicle_name?: string | null; vehicle_plate?: string | null; vehicle_type?: string | null; driver_user_id?: number | null; members: Member[]; shifts: Shift[] }
 interface ShiftView { active: ShiftTeamType; dispatcherShift: ShiftTeamType | null; canEdit: boolean }
@@ -452,12 +452,12 @@ export default function Responders({
                 <SelectContent>
                   <SelectItem value="none">Unassigned</SelectItem>
                   {vehicles.map((v) => {
-                    const isMaintenance = v.status === 'maintenance';
+                    const unavailable = !v.assignable && v.id !== editing?.vehicle_id;
                     const otherTeam = v.response_team_id && v.response_team_id !== editing?.id ? v.team_name : null;
                     return (
-                      <SelectItem key={v.id} value={String(v.id)} disabled={isMaintenance}>
+                      <SelectItem key={v.id} value={String(v.id)} disabled={unavailable}>
                         {v.plate_number} · {v.name} ({v.vehicle_type.replace('-', ' ')})
-                        {isMaintenance ? ' — Under Maintenance' : otherTeam ? ` — Assigned to ${otherTeam}` : ''}
+                        {unavailable ? ' — Unavailable' : otherTeam ? ` — Assigned to ${otherTeam}` : ''}
                       </SelectItem>
                     );
                   })}

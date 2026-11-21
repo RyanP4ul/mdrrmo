@@ -33,18 +33,10 @@ abstract class User extends Authenticatable
             }
 
             $user->setAttribute('id', DB::transaction(function (): int {
-                $sequence = DB::table('account_id_sequences')
-                    ->where('id', 1)
-                    ->lockForUpdate()
-                    ->first();
-
-                if ($sequence === null) {
-                    throw new \RuntimeException('The account ID sequence has not been initialized.');
-                }
-
+                $lastId = Account::lockIdSequence();
                 DB::table('account_id_sequences')->where('id', 1)->increment('next_id');
 
-                return (int) $sequence->next_id + 1;
+                return $lastId + 1;
             }));
         });
     }

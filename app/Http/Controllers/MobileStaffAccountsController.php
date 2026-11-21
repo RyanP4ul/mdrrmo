@@ -53,10 +53,11 @@ class MobileStaffAccountsController extends Controller
                 if ($user->hasRole('admin')) {
                     AdminUser::where('status', 'active')->orderBy('id')->lockForUpdate()->get();
                 }
-                $user = $user->newQuery()->whereKey($user->id)->lockForUpdate()->firstOrFail();
+                $user = Account::lockForStatusChange($user);
                 abort_unless($data['role'] === $user->role, 422, 'An account role cannot change after creation.');
                 abort_if($user->account_key === $request->user()->account_key && $data['status'] !== 'active', 422, 'You cannot disable your own account.');
                 abort_if($user->hasRole('admin') && $data['status'] !== 'active' && $user->status === 'active' && AdminUser::where('status', 'active')->count() <= 1, 422, 'Keep at least one active administrator.');
+                Account::ensureStatusChangeAllowed($user, $data['status']);
             } else {
                 $model = Account::modelForRole($data['role']);
                 $user = new $model;

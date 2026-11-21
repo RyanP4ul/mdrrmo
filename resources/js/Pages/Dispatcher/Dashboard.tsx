@@ -1,5 +1,6 @@
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { route } from 'ziggy-js';
+import { toast } from 'sonner';
 import { Lock, Phone, PhoneCall, Radio, Smartphone, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
@@ -66,7 +67,14 @@ function DispatchForm({ selected, types, autoTeam, teams = [], onDone }: { selec
     } else {
       form.transform((data) => ({ ...data, team_id: chosenTeamId }));
     }
-    form.post(route('dispatcher.dispatch.store'), { preserveScroll: true, onSuccess: () => { form.reset(); onDone(); } });
+    form.post(route('dispatcher.dispatch.store'), {
+      preserveScroll: true,
+      onSuccess: () => { form.reset(); onDone(); },
+      onError: (errors) => {
+        const message = errors.team ?? errors.team_id ?? errors.status;
+        if (message) toast.error(message);
+      },
+    });
   };
 
   return (
@@ -178,21 +186,26 @@ function DispatchForm({ selected, types, autoTeam, teams = [], onDone }: { selec
               </SelectContent>
             </Select>
           </Field>
-          <div className={cn('rounded-md border p-3.5 text-sm', selectedTeamOption ? 'border-ok/30 bg-ok-soft' : 'border-warning/30 bg-warning-soft')}>
-            <p className={cn('flex items-center gap-2 font-medium', selectedTeamOption ? 'text-ok' : 'text-warning')}>
+          <div className={cn('rounded-md border p-3.5 text-sm', selectedTeamOption && selectedTeamOption.vehicle_name ? 'border-ok/30 bg-ok-soft' : 'border-warning/30 bg-warning-soft')}>
+            <p className={cn('flex items-center gap-2 font-medium', selectedTeamOption && selectedTeamOption.vehicle_name ? 'text-ok' : 'text-warning')}>
               <Users className="size-4" aria-hidden="true" />
               {selectedTeamOption
                 ? `${form.data.team_id === 'auto' ? 'Auto-assigned' : 'Selected team'}: ${selectedTeamOption.name}`
-                : 'No team with an active linked driver/responder available'}
+                : 'No team with an active driver/responder and assigned vehicle available'}
             </p>
-            {!selectedTeamOption && <p className="mt-1.5 text-xs text-foreground/80">A team must have active members before dispatching. <Link href="/dispatcher/responders" className="font-medium text-primary underline underline-offset-2">Review response teams</Link></p>}
+            {!selectedTeamOption && <p className="mt-1.5 text-xs text-foreground/80">A response team must have active members and an assigned vehicle before dispatching. <Link href="/dispatcher/responders" className="font-medium text-primary underline underline-offset-2">Review response teams</Link></p>}
+            {selectedTeamOption && !selectedTeamOption.vehicle_name && (
+              <p role="alert" className="mt-1 text-xs font-medium text-critical">
+                {selectedTeamOption.name} needs an assigned vehicle first before it can be dispatched.
+              </p>
+            )}
             {e.team && <p role="alert" className="mt-1 text-xs font-medium text-critical">{e.team}</p>}
             {e.status && <p role="alert" className="mt-1 text-xs font-medium text-critical">{e.status}</p>}
             {e.report_id && <p role="alert" className="mt-1 text-xs font-medium text-critical">{e.report_id}</p>}
             {selectedTeamOption && (
               <p className="mt-1 text-xs text-foreground/80">
                 Members: {selectedTeamOption.members.map((m) => `${m.name}${m.role ? ` (${m.role})` : ''}`).join(', ') || '—'}
-                {selectedTeamOption.vehicle_name ? ` · Vehicle: ${selectedTeamOption.vehicle_name}` : ''}
+                {selectedTeamOption.vehicle_name ? ` · Vehicle: ${selectedTeamOption.vehicle_name}` : ' · Vehicle: None assigned'}
               </p>
             )}
           </div>

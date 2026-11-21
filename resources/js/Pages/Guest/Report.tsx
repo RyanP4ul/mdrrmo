@@ -21,6 +21,7 @@ export default function GuestReport() {
     const [sending, setSending] = useState(false);
     const [reference, setReference] = useState<string>();
     const [error, setError] = useState('');
+    const [photo, setPhoto] = useState<File>();
     const [errors, setErrors] = useState<Record<string, string[]>>({});
     const [form, setForm] = useState({ reporter_name: '', reporter_contact: '', incident_type_id: '', reporter_type: 'victim', location: '', description: '', lat: null as number | null, lng: null as number | null });
     const submissionKeys = useRef(new Map<string, string>());
@@ -43,6 +44,10 @@ export default function GuestReport() {
     async function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (inFlight.current) return;
+        if (!photo || photo.size > 5 * 1024 * 1024) {
+            setErrors({ photo: ['Choose an incident photo up to 5 MB.'] });
+            return;
+        }
         if (form.lat === null || form.lng === null) {
             setError('Drag the map pin to the incident location or use your current location.');
             return;
@@ -53,10 +58,15 @@ export default function GuestReport() {
         setErrors({});
         try {
             const payload = { ...form, reporter_name: form.reporter_name.trim().replace(/\s+/g, ' '), reporter_contact: form.reporter_contact.replace(/[\s-]+/g, ''), location: form.location.trim(), description: form.description.trim() };
-            const fingerprint = JSON.stringify(payload);
+            const photoHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await photo.arrayBuffer())))
+                .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+            const fingerprint = JSON.stringify([payload, photo.name, photoHash]);
             const key = submissionKeys.current.get(fingerprint) ?? crypto.randomUUID();
             submissionKeys.current.set(fingerprint, key);
-            const { data } = await axios.post('/api/guest/reports', payload, { headers: { Accept: 'application/json', 'Idempotency-Key': key }, timeout: 30000 });
+            const body = new FormData();
+            Object.entries(payload).forEach(([field, value]) => { if (value !== null) body.set(field, String(value)); });
+            body.set('photo', photo);
+            const { data } = await axios.post('/api/guest/reports', body, { headers: { Accept: 'application/json', 'Idempotency-Key': key }, timeout: 30000 });
             if (typeof data.reference !== 'string' || !data.reference) throw new Error('Missing receipt');
             setReference(data.reference);
         } catch (failure) {
@@ -114,8 +124,8 @@ export default function GuestReport() {
                                 </div>
                             )}
                             <fieldset disabled={sending} className="space-y-4 disabled:opacity-70">
-                                <Field label="What is happening?" htmlFor="guest-description" required error={err('description')}>
-                                    <Textarea id="guest-description" required maxLength={2000} rows={4} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
+                                <Field label="Additional details (optional)" htmlFor="guest-description" error={err('description')}>
+                                    <Textarea id="guest-description" maxLength={2000} rows={4} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
                                 </Field>
                                 <div className="grid gap-4 sm:grid-cols-2">
                                     <Field label="Incident type" htmlFor="guest-type" required error={err('incident_type_id')}>
@@ -143,6 +153,12 @@ export default function GuestReport() {
                                         onChange={(lat, lng) => { if (!inFlight.current) setForm((current) => ({ ...current, lat, lng })); }}
                                         onAddress={(location) => { if (!inFlight.current) setForm((current) => ({ ...current, location })); }}
                                     />
+                                </Field>
+                                <Field label="Incident photo" htmlFor="guest-photo" required error={err('photo')} hint="JPEG, PNG, or WebP up to 5 MB.">
+                                    <Input id="guest-photo" type="file" accept="image/jpeg,image/png,image/webp" required onChange={(event) => {
+                                        setPhoto(event.target.files?.[0]);
+                                        setErrors((current) => ({ ...current, photo: [] }));
+                                    }} />
                                 </Field>
                                 <div className="grid gap-4 border-t pt-4 sm:grid-cols-2">
                                     <Field label="Your full name" htmlFor="guest-name" required error={err('reporter_name')}>

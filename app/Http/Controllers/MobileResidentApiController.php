@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Events\EmergencyReportUpdated;
-use App\Http\Controllers\Resident\ResidentController;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
 use App\Models\ResidentNotification;
@@ -74,14 +73,16 @@ class MobileResidentApiController extends Controller
             'location' => ['required', 'string', 'max:255'],
             'lat' => ['required', 'numeric', 'between:-90,90'],
             'lng' => ['required', 'numeric', 'between:-180,180'],
-            'description' => ['required', 'string', 'max:2000'],
+            'description' => ['nullable', 'string', 'max:2000'],
             'photo' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
         ]);
 
+        $data['description'] ??= '';
         unset($data['photo']);
         $photoPath = $request->hasFile('photo')
             ? $request->file('photo')->store('incident-photos', 'r2')
             : null;
+        abort_if($photoPath === false, 503, 'The incident photo could not be saved. Please retry.');
 
         try {
             [$report, $notification] = DB::transaction(function () use ($resident, $data, $photoPath): array {
@@ -99,6 +100,7 @@ class MobileResidentApiController extends Controller
                     $data['incident_type_id'] = $incidentType->getKey();
                 }
                 unset($data['incident_type_name']);
+                $reportedAt = now(config('mobile.timezone'));
                 $report = $resident->reports()->create($data + [
                     'photo_path' => $photoPath,
                     'reference' => 'RPT-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
@@ -109,7 +111,8 @@ class MobileResidentApiController extends Controller
                     'reported_by_type' => $resident->getMorphClass(),
                     'reporter_name' => $resident->full_name,
                     'reporter_contact' => $resident->contact_number,
-                    'reported_at' => now(),
+                    'reported_at' => $reportedAt->copy()->utc(),
+                    'victim_info' => $data['reporter_type'] === 'victim' ? $resident->victimInformation($reportedAt) : null,
                 ]);
                 $notification = ResidentNotification::query()->create([
                     'user_id' => $resident->getKey(),
@@ -149,11 +152,9 @@ class MobileResidentApiController extends Controller
         abort_unless($resident->registration_status === 'accepted', 403, 'Your account is awaiting approval.');
 
         $data = $request->validate([
-            'service_type' => ['required', 'string', 'in:'.implode(',', ResidentController::SERVICES)],
+            ...ServiceScheduleWorkflow::bookingFields(),
             'preferred_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:'.now(config('mobile.timezone'))->toDateString()],
             'preferred_time' => ['required', 'date_format:H:i,g:i A'],
-            'address' => ['required', 'string', 'max:255'],
-            'notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
         $time = Carbon::createFromFormat(str_contains($data['preferred_time'], 'M') ? 'g:i A' : 'H:i', $data['preferred_time'])->format('H:i');

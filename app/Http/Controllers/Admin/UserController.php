@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\ArchiveService;
 use App\Support\Audit;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -102,20 +103,24 @@ class UserController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(Request $request): RedirectResponse
     {
         $data = $this->validated($request);
         $password = $data['password'];
         $model = Account::modelForRole($data['role']);
         unset($data['role'], $data['password']);
-        $user = (new $model($data))->forceFill(['password' => $password]);
-        $user->save();
+        $user = DB::transaction(function () use ($model, $data, $password): User {
+            Account::lockIdSequence();
+            $this->ensureUniqueName($data['first_name'], $data['last_name']);
+
+            return $model::create($data + ['password' => $password]);
+        }, 3);
         Audit::record('CREATE_USER', "Created {$user->role} account for {$user->full_name}");
 
         return back()->with('success', 'User created.');
     }
 
-    public function update(Request $request, string $account)
+    public function update(Request $request, string $account): RedirectResponse
     {
         $user = Account::findByKey($account);
         abort_unless($user, 404);
@@ -130,11 +135,21 @@ class UserController extends Controller
 
         $password = $data['password'] ?? null;
         unset($data['role'], $data['password']);
-        $user->fill($data);
-        if (filled($password)) {
-            $user->forceFill(['password' => $password]);
-        }
-        $user->save();
+        $user = DB::transaction(function () use ($user, $data, $password): User {
+            Account::lockIdSequence();
+            $user = Account::lockForStatusChange($user);
+            Account::ensureStatusChangeAllowed($user, $data['status']);
+            $user->fill($data);
+            if ($user->isDirty(['first_name', 'last_name'])) {
+                $this->ensureUniqueName($user->first_name, $user->last_name, $user);
+            }
+            if (filled($password)) {
+                $user->forceFill(['password' => $password]);
+            }
+            $user->save();
+
+            return $user;
+        }, 3);
         Audit::record('UPDATE_USER', "Updated {$user->full_name}");
 
         return back()->with('success', 'User updated.');
@@ -154,7 +169,11 @@ class UserController extends Controller
             'status' => ['required', 'in:active,inactive'],
         ]);
 
-        $user->forceFill(['status' => $data['status']])->save();
+        DB::transaction(function () use ($user, $data): void {
+            $user = Account::lockForStatusChange($user);
+            Account::ensureStatusChangeAllowed($user, $data['status']);
+            $user->forceFill(['status' => $data['status']])->save();
+        }, 3);
         Audit::record('UPDATE_USER', "Updated {$user->full_name} status to {$data['status']}");
 
         return back()->with('success', $data['status'] === 'active' ? 'User activated.' : 'User deactivated.');
@@ -225,6 +244,22 @@ class UserController extends Controller
             ->unionAll(DriverResponderUser::query()->select($columns)->selectRaw('? as role, NULL as phone_number, shift_team', ['driver/responder']));
 
         return DB::query()->fromSub($accounts, 'employee_accounts');
+    }
+
+    private function ensureUniqueName(string $firstName, string $lastName, ?User $user = null): void
+    {
+        foreach (Account::classes() as $model) {
+            $exists = $model::withTrashed()
+                ->whereRaw('LOWER(first_name) = LOWER(?) AND LOWER(last_name) = LOWER(?)', [$firstName, $lastName])
+                ->when($user instanceof $model, fn ($query) => $query->whereKeyNot($user->getKey()))
+                ->exists();
+
+            if ($exists) {
+                throw ValidationException::withMessages([
+                    'first_name' => 'An account with this first and last name already exists.',
+                ]);
+            }
+        }
     }
 
     /**

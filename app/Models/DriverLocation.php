@@ -32,10 +32,16 @@ class DriverLocation extends Model
         $trip = $report?->trip;
         $status = $this->expires_at->isPast() || $this->driver->status !== 'active'
             ? 'offline' : ($report ? ($trip?->on_scene_at ? 'on-scene' : ($trip?->started_at ? 'en-route' : 'dispatched')) : 'available');
+        $activeTeam = $report?->team ?? $this->driver->activeMemberships->first()?->team;
+        $membership = $activeTeam
+            ? ($this->driver->activeMemberships->firstWhere('response_team_id', $activeTeam->id) ?? $this->driver->activeMemberships->first())
+            : $this->driver->activeMemberships->first();
 
         return [
             'id' => $this->driver_id, 'name' => $this->driver->full_name,
-            'teamName' => $report?->team?->team_name ?? $this->driver->activeMemberships->first()?->team?->team_name,
+            'teamId' => $activeTeam?->id,
+            'teamName' => $activeTeam?->team_name,
+            'memberRole' => $membership?->role,
             'lat' => $this->lat, 'lng' => $this->lng, 'accuracy' => $this->accuracy,
             'speed' => $this->speed, 'heading' => $this->heading, 'status' => $status,
             'assignedReportId' => $report?->id, 'report' => $report?->only('id', 'reference', 'location'),

@@ -427,9 +427,10 @@ class WebsiteImprovementTest extends TestCase
     {
         $futureTeam = ResponseTeam::create(['team_name' => 'Future Team', 'status' => 'active']);
         $onShiftTeam = ResponseTeam::create(['team_name' => 'On Shift Team', 'status' => 'active']);
-        foreach ([$futureTeam, $onShiftTeam] as $team) {
+        foreach ([$futureTeam, $onShiftTeam] as $index => $team) {
             $driver = DriverResponderUser::factory()->create();
             $team->members()->create(['user_id' => $driver->id, 'name' => $driver->full_name, 'status' => 'active']);
+            Vehicle::create(['response_team_id' => $team->id, 'plate_number' => 'AMB-SH-'.$index, 'vehicle_type' => 'ambulance', 'status' => 'available']);
         }
         $futureTeam->shifts()->create([
             'start_time' => now()->addHour(),

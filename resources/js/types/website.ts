@@ -34,19 +34,21 @@ export interface ReportForm {
         date?: string;
         location?: string;
         patientName?: string;
-        age?: string | number;
+        age?: string | number | null;
         sex?: string;
         address?: string;
         typeOfIncident?: string;
-        allergies?: string;
-        medications?: string;
-        assessmentComment?: string;
-        treatmentManagement?: string;
+        allergies?: string | null;
+        medications?: string | null;
+        assessmentComment?: string | null;
+        treatmentManagement?: string | null;
         vitalSigns?: {
-            bloodPressure?: string;
-            pulseRate?: string;
-            respiration?: string;
-        };
+            bloodPressure?: string | null;
+            pulseRate?: string | null;
+            respiration?: string | null;
+        } | null;
+        endorsedBy?: { name?: string | null; time?: string | null; date?: string | null } | null;
+        endorsedTo?: { name?: string | null; time?: string | null; date?: string | null } | null;
     };
 }
 
@@ -137,6 +139,8 @@ export interface MaintenanceReportItem {
     reported_by: number;
     reporter_name: string | null;
     issue_type: string;
+    issue_details?: string | null;
+    issue_label?: string | null;
     severity: 'low' | 'medium' | 'high' | 'critical';
     mileage: number | null;
     description: string;
@@ -173,6 +177,7 @@ export interface DispatchTeam {
 export interface ServiceSchedule {
     id: number;
     service_type: string;
+    service_details?: string | null;
     preferred_date: string;
     preferred_time: string;
     address: string;

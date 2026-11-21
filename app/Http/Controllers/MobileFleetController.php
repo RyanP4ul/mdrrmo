@@ -48,6 +48,7 @@ class MobileFleetController extends Controller
             }
             abort_if($id && $data['status'] !== 'active' && $team->reports()->active()->exists(), 422, 'Complete or reassign active reports before disabling this team.');
             $team->fill($data)->save();
+            app(TeamRoles::class)->normalizePair($team);
             Audit::record('SAVE_TEAM', 'Mobile team '.$team->team_name);
 
             return response()->json($team, $id ? 200 : 201);
@@ -78,9 +79,10 @@ class MobileFleetController extends Controller
                 $team->update(['member_roles_enabled' => true]);
                 TeamRoleUpdated::dispatch($team->id);
             }
+            app(TeamRoles::class)->normalizePair($team);
             Audit::record('SAVE_TEAM_MEMBER', 'Team '.$team->id.' member '.$member->name);
 
-            return response()->json($member, $id ? 200 : 201);
+            return response()->json($member->refresh(), $id ? 200 : 201);
         });
     }
 

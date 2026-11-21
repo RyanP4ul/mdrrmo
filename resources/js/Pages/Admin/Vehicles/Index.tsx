@@ -342,7 +342,7 @@ export default function VehiclesIndex({
                       </TableCell>
                       <TableCell className="max-w-80">
                         <div className="flex flex-wrap items-center gap-1.5 font-medium">
-                          <span>{r.issue_type}</span>
+                          <span>{r.issue_label || r.issue_type}</span>
                           {r.recommend_out_of_service && (
                             <span className="rounded bg-critical-soft px-1.5 py-0.5 text-[10px] font-semibold text-critical">
                               Out-of-service recommended
@@ -475,7 +475,7 @@ export default function VehiclesIndex({
                     <StatusBadge value={reviewing.status} />
                   </div>
                 </div>
-                <p className="font-medium">{reviewing.issue_type}</p>
+                <p className="font-medium">{reviewing.issue_label || reviewing.issue_type}</p>
                 <p className="text-muted-foreground">{reviewing.description}</p>
                 <p className="text-xs text-muted-foreground">
                   Reported by {reviewing.reporter_name} ({reviewing.team_name ?? 'No team'})

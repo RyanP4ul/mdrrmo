@@ -7,6 +7,7 @@ use App\Http\Controllers\Driver;
 use App\Http\Controllers\DriverFormController;
 use App\Http\Controllers\GuestReportController;
 use App\Http\Controllers\Resident;
+use App\Http\Controllers\ScheduleReportController;
 use App\Http\Controllers\WebAuthController;
 use Illuminate\Support\Facades\Route;
 
@@ -41,9 +42,11 @@ Route::get('/dashboard', fn () => redirect()->route(match (auth()->user()->role)
 
 Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/', Admin\DashboardController::class)->name('dashboard');
+    Route::get('notifications', Admin\NotificationController::class)->name('notifications.index');
     Route::get('reports/operations/summary', [Admin\EmergencyReportController::class, 'operationsSummary'])->name('reports.operations.summary');
     Route::get('reports/operations/pdf', [Admin\EmergencyReportController::class, 'operationsPdf'])->name('reports.operations.pdf');
     Route::get('reports/{report}/driver-form', DriverFormController::class)->name('reports.driver-form');
+    Route::get('schedules/{schedule}', ScheduleReportController::class)->name('schedules.show');
     Route::patch('reports/{report}/archive', [Admin\EmergencyReportController::class, 'archive'])->name('reports.archive');
     Route::resource('reports', Admin\EmergencyReportController::class)->only(['index', 'show', 'update']);
     Route::resource('users', Admin\UserController::class)
@@ -86,10 +89,8 @@ Route::middleware(['auth', 'role:dispatcher'])->prefix('dispatcher')->name('disp
         ->scopeBindings()
         ->name('shifts.update');
     Route::get('map', [Dispatcher\MapController::class, 'index'])->name('map');
-    Route::resource('vehicles', Admin\VehicleController::class)->only(['index', 'store', 'update', 'destroy']);
-    Route::patch('vehicles/{vehicle}/status', [Admin\VehicleController::class, 'updateStatus'])->name('vehicles.status');
-    Route::patch('maintenance-reports/{maintenanceReport}/review', [Admin\VehicleController::class, 'reviewMaintenanceReport'])->name('maintenance-reports.review');
     Route::get('schedule', [Dispatcher\ScheduleController::class, 'index'])->name('schedule.index');
+    Route::get('schedules/{schedule}', ScheduleReportController::class)->name('schedules.show');
     Route::patch('schedule/{schedule}/acknowledge', [Dispatcher\ScheduleController::class, 'acknowledge'])->name('schedule.acknowledge');
     Route::patch('schedule/{schedule}/decline', [Dispatcher\ScheduleController::class, 'decline'])->name('schedule.decline');
 });
@@ -101,6 +102,7 @@ Route::middleware(['auth', 'role:driver/responder'])->prefix('driver')->name('dr
     Route::patch('assignments/{report}', [Driver\DriverController::class, 'updateStatus'])->name('assignments.status');
     Route::get('reports', [Driver\DriverController::class, 'reports'])->name('reports');
     Route::put('reports/{report}/form', [Driver\DriverController::class, 'saveForm'])->name('reports.form');
+    Route::put('schedules/{schedule}/driver-ticket', [Driver\DriverController::class, 'saveScheduleDriverTicket'])->name('schedules.driver-ticket');
     Route::get('team', [Driver\DriverController::class, 'team'])->name('team');
     Route::patch('teams/{team}/role', [Driver\DriverController::class, 'changeTeamRole'])->name('teams.role');
     Route::patch('teams/{team}/vehicle', [Driver\DriverController::class, 'switchVehicle'])->name('teams.vehicle');

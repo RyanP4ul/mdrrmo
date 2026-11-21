@@ -9,9 +9,12 @@ use App\Models\IncidentType;
 use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
 use App\Models\TeamMember;
+use App\Models\Vehicle;
 use App\Services\DispatchService;
 use App\Services\EmergencyReportWorkflow;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia as Assert;
 use Laravel\Sanctum\Sanctum;
@@ -20,6 +23,12 @@ use Tests\TestCase;
 class GuestReportTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Storage::fake('r2');
+    }
 
     private function payload(): array
     {
@@ -31,7 +40,7 @@ class GuestReportTest extends TestCase
             'incident_type_id' => $type->id, 'reporter_type' => 'witness',
             'reporter_name' => 'Juan Dela Cruz', 'reporter_contact' => '09171234567',
             'location' => 'Municipal Hall, Balagtas', 'lat' => 14.8153, 'lng' => 120.9094,
-            'description' => 'A person needs medical attention.',
+            'photo' => UploadedFile::fake()->image('incident.png'),
         ];
     }
 
@@ -55,7 +64,9 @@ class GuestReportTest extends TestCase
             'reference' => $response->json('reference'), 'reporter_name' => 'Juan Dela Cruz',
             'reporter_contact' => '+639171234567', 'reported_by' => null, 'reported_by_type' => null,
             'priority' => 'high', 'status' => 'pending', 'source' => 'mobile-app',
+            'description' => '',
         ]);
+        Storage::disk('r2')->assertExists(EmergencyReport::firstOrFail()->photo_path);
         $this->assertDatabaseCount('residents', 0);
         $this->assertDatabaseCount('personal_access_tokens', 0);
         $this->assertDatabaseCount('resident_notifications', 0);
@@ -95,6 +106,9 @@ class GuestReportTest extends TestCase
     public function test_guest_validation_rejects_bad_identity_coordinates_and_missing_submission_keys(): void
     {
         $payload = $this->payload();
+        unset($payload['photo']);
+        $this->postJson('/api/guest/reports', $payload, ['Idempotency-Key' => (string) Str::uuid()])
+            ->assertUnprocessable()->assertJsonValidationErrors('photo');
         $this->postJson('/api/guest/reports', $payload)->assertUnprocessable()->assertJsonValidationErrors('submission_key');
         $this->postJson('/api/guest/reports', array_replace($payload, [
             'reporter_name' => ['bad input'], 'reporter_contact' => ['bad input'],
@@ -138,6 +152,7 @@ class GuestReportTest extends TestCase
         $this->assertSame('acknowledged', $report->fresh()->status);
         $driver = DriverResponderUser::factory()->create();
         $team = ResponseTeam::create(['team_name' => 'Guest response team', 'status' => 'active']);
+        Vehicle::create(['response_team_id' => $team->id, 'plate_number' => 'AMB-GUEST1', 'vehicle_type' => 'ambulance', 'status' => 'available']);
         TeamMember::create(['response_team_id' => $team->id, 'user_id' => $driver->id, 'name' => $driver->full_name, 'role' => 'Driver', 'status' => 'active']);
         app(DispatchService::class)->dispatch($report, $team);
         $this->assertSame($driver->id, $report->fresh()->assigned_driver_id);

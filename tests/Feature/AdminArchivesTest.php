@@ -13,6 +13,7 @@ use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
 use App\Models\Vehicle;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -36,7 +37,7 @@ class AdminArchivesTest extends TestCase
     {
         $admin = AdminUser::factory()->create();
         $dispatcher = DispatcherUser::factory()->create();
-        $resident = ResidentUser::factory()->create();
+        $resident = ResidentUser::factory()->create(['status' => 'inactive']);
         $vehicle = Vehicle::create([
             'name' => 'Rescue One',
             'plate_number' => 'ABC-1234',
@@ -149,7 +150,7 @@ class AdminArchivesTest extends TestCase
     {
         Storage::fake('public');
         $admin = AdminUser::factory()->create();
-        $photoPath = Storage::disk('public')->put('vehicles', \Illuminate\Http\UploadedFile::fake()->image('truck.jpg'));
+        $photoPath = Storage::disk('public')->put('vehicles', UploadedFile::fake()->image('truck.jpg'));
 
         $vehicle = Vehicle::create([
             'name' => 'Unit 9',
@@ -198,8 +199,8 @@ class AdminArchivesTest extends TestCase
     public function test_admin_can_cancel_scheduled_deletion_or_restore_during_30_day_wait(): void
     {
         $admin = AdminUser::factory()->create();
-        $residentA = ResidentUser::factory()->create();
-        $residentB = ResidentUser::factory()->create();
+        $residentA = ResidentUser::factory()->create(['status' => 'inactive']);
+        $residentB = ResidentUser::factory()->create(['status' => 'inactive']);
 
         // Archive both
         $this->actingAs($admin)->delete(route('admin.users.destroy', Account::keyFor($residentA)))->assertRedirect();
@@ -222,5 +223,39 @@ class AdminArchivesTest extends TestCase
         $this->assertNull(ResidentUser::withTrashed()->find($residentA->id)?->purge_scheduled_at);
 
         $this->assertDatabaseHas('residents', ['id' => $residentB->id, 'deleted_at' => null, 'purge_scheduled_at' => null]);
+    }
+
+    public function test_active_accounts_cannot_be_archived_and_an_emergency_protects_both_team_members(): void
+    {
+        $admin = AdminUser::factory()->create();
+        $driver = DriverResponderUser::factory()->create(['contact_number' => '09171234567']);
+        $responder = DriverResponderUser::factory()->create(['contact_number' => '09171234568']);
+        $team = ResponseTeam::create(['team_name' => 'Emergency pair', 'status' => 'active']);
+        foreach ([$driver, $responder] as $member) {
+            $team->members()->create(['user_id' => $member->id, 'name' => $member->full_name, 'role' => $member->is($driver) ? 'Driver' : 'Responder', 'status' => 'active']);
+        }
+        $type = IncidentType::create(['name' => 'Medical', 'description' => 'Medical', 'priority' => 'high', 'color' => '#223344']);
+        $report = EmergencyReport::create([
+            'reference' => EmergencyReport::generateReference(), 'incident_type_id' => $type->id,
+            'reporter_type' => 'witness', 'reporter_name' => 'Town Hall Staff', 'location' => 'Town hall', 'description' => '',
+            'lat' => 14.8, 'lng' => 120.9, 'priority' => 'high', 'status' => 'dispatched',
+            'response_team_id' => $team->id, 'assigned_driver_id' => $driver->id,
+        ]);
+
+        $this->actingAs($admin);
+        $this->delete(route('admin.users.destroy', Account::keyFor($responder)))->assertSessionHasErrors('user');
+        foreach ([$driver, $responder] as $member) {
+            $key = Account::keyFor($member);
+            $this->patch(route('admin.users.status', $key), ['status' => 'inactive'])->assertSessionHasErrors('status');
+            $this->putJson(route('admin.users.update', $key), $member->only(['first_name', 'last_name', 'email', 'contact_number']) + [
+                'role' => 'driver/responder', 'status' => 'inactive',
+            ])->assertUnprocessable()->assertJsonValidationErrors('status');
+            $this->assertSame('active', $member->fresh()->status);
+        }
+        $report->update(['status' => 'resolved']);
+        $key = Account::keyFor($responder);
+        $this->patch(route('admin.users.status', $key), ['status' => 'inactive'])->assertSessionHasNoErrors();
+        $this->delete(route('admin.users.destroy', $key))->assertSessionHasNoErrors();
+        $this->assertSoftDeleted($responder);
     }
 }

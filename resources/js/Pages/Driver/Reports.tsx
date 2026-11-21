@@ -78,6 +78,22 @@ type ReportWithTrip = EmergencyReport & {
   trip?: { destination?: string | null; vehicle_number?: string | null } | null;
 };
 
+interface AssignedScheduleRow {
+  id: number;
+  reference: string;
+  service_type: string;
+  service_details?: string | null;
+  preferred_date: string | null;
+  preferred_time: string;
+  address: string;
+  destination_address?: string | null;
+  status: string;
+  resident?: string | null;
+  team_name?: string | null;
+  vehicle?: string | null;
+  driver_ticket?: EmergencyReport['form'] extends { driver_section: infer T } | null | undefined ? T | null : Record<string, unknown> | null;
+}
+
 function computeFuelTotals(next: typeof blankDriver) {
   const num = (v: unknown) => {
     const parsed = parseFloat(String(v ?? ''));
@@ -101,16 +117,18 @@ function computeFuelTotals(next: typeof blankDriver) {
 
 export default function Reports({
   reports,
+  schedules = [],
   isDriver = true,
   teamRoles = [],
 }: {
   reports: Paginated<ReportWithTrip>;
+  schedules?: AssignedScheduleRow[];
   isDriver?: boolean;
   teamRoles?: TeamRoleMembership[];
 }) {
   const { auth } = usePage<PageProps>().props;
   const [tab, setTab] = useState<'driver' | 'emergency'>(isDriver ? 'driver' : 'emergency');
-  const [driverRep, setDriverRep] = useState<ReportWithTrip | null>(null);
+  const [driverSchedule, setDriverSchedule] = useState<AssignedScheduleRow | null>(null);
   const [emergencyRep, setEmergencyRep] = useState<ReportWithTrip | null>(null);
 
   const driverForm = useForm<{ driver_section: typeof blankDriver }>({ driver_section: blankDriver });
@@ -121,25 +139,22 @@ export default function Reports({
     ? `${activeVehicle.plate_number}${activeVehicle.name ? ` · ${activeVehicle.name}` : ''}`
     : '';
 
-  const openDriverForm = (r: ReportWithTrip) => {
+  const openDriverTicket = (s: AssignedScheduleRow) => {
     driverForm.clearErrors();
-    setDriverRep(r);
-    const saved = r.form?.driver_section ?? {};
-    const defaultDate = (r.reported_at ?? new Date().toISOString()).slice(0, 10);
-    const defaultDriver =
-      (r.driver ? `${r.driver.first_name} ${r.driver.last_name}`.trim() : '') ||
-      teamRoles[0]?.driver_name ||
-      auth.user.full_name;
-    const victimName = String((r.victim_info as Record<string, unknown> | null)?.name ?? r.reporter_name ?? '').trim();
-    const defaultDestination = r.trip?.destination || r.location || '';
-    const defaultPurpose = `Emergency Response - ${r.incident_type?.name ?? 'Emergency'}`;
+    setDriverSchedule(s);
+    const saved = (s.driver_ticket ?? {}) as Record<string, unknown>;
+    const defaultDate = s.preferred_date ?? new Date().toISOString().slice(0, 10);
+    const defaultDriver = teamRoles[0]?.driver_name || auth.user.full_name;
+    const requesterName = String(s.resident ?? '').trim();
+    const defaultDestination = s.destination_address || s.address || '';
+    const defaultPurpose = s.service_details || s.service_type || 'Scheduled Service';
 
     driverForm.setData({
       driver_section: computeFuelTotals({
         tripDate: String(saved.tripDate || defaultDate),
         driverName: String(saved.driverName || defaultDriver),
-        governmentCardPlateNo: String(saved.governmentCardPlateNo || activePlate),
-        authorizedPassenger: String(saved.authorizedPassenger || saved.passengerName || victimName),
+        governmentCardPlateNo: String(saved.governmentCardPlateNo || s.vehicle || activePlate),
+        authorizedPassenger: String(saved.authorizedPassenger || saved.passengerName || requesterName),
         placeVisitedInspected: String(saved.placeVisitedInspected || defaultDestination),
         purpose: String(saved.purpose || defaultPurpose),
         balanceInTank: saved.balanceInTank != null ? String(saved.balanceInTank) : '',
@@ -161,9 +176,22 @@ export default function Reports({
     emergencyForm.setData({
       emergency_section: saved
         ? {
-            ...blankEmergency,
-            ...saved,
-            vitalSigns: { ...blankEmergency.vitalSigns, ...saved.vitalSigns },
+            timeReported: saved.timeReported ?? '',
+            timeOfArrival: saved.timeOfArrival ?? '',
+            patientName: saved.patientName ?? '',
+            age: String(saved.age ?? ''),
+            sex: saved.sex ?? blankEmergency.sex,
+            address: saved.address ?? '',
+            typeOfIncident: saved.typeOfIncident ?? blankEmergency.typeOfIncident,
+            allergies: saved.allergies ?? '',
+            medications: saved.medications ?? '',
+            assessmentComment: saved.assessmentComment ?? '',
+            treatmentManagement: saved.treatmentManagement ?? '',
+            vitalSigns: {
+              bloodPressure: saved.vitalSigns?.bloodPressure ?? '',
+              pulseRate: saved.vitalSigns?.pulseRate ?? '',
+              respiration: saved.vitalSigns?.respiration ?? '',
+            },
           }
         : {
             ...blankEmergency,
@@ -230,13 +258,13 @@ export default function Reports({
 
   return (
     <AppLayout>
-      <Head title="Driver Forms & Emergency Reports" />
+      <Head title="Driver Tickets & Emergency Forms" />
       <PageHeader
-        title={tab === 'driver' ? 'Driver Forms' : 'Emergency / Patient Care Reports'}
+        title={tab === 'driver' ? 'Driver Tickets (Scheduled Services)' : 'Emergency Forms'}
         description={
           tab === 'driver'
-            ? 'Complete the Driver Authorization and Fuel Form for your dispatches.'
-            : 'Complete the clinical Emergency / Patient Care assessment separately from the Driver Form.'
+            ? 'Complete the Driver Ticket for assigned scheduled services.'
+            : 'Complete the clinical Emergency Form for assigned emergency incidents.'
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -248,7 +276,7 @@ export default function Reports({
                 onClick={() => setTab('driver')}
               >
                 <Truck className="mr-1.5 size-3.5" aria-hidden="true" />
-                Driver Forms
+                Driver Tickets
               </Button>
               <Button
                 type="button"
@@ -257,7 +285,7 @@ export default function Reports({
                 onClick={() => setTab('emergency')}
               >
                 <FileText className="mr-1.5 size-3.5" aria-hidden="true" />
-                Emergency Reports
+                Emergency Forms
               </Button>
             </div>
             <span className="inline-flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-1 text-xs font-medium">
@@ -275,77 +303,98 @@ export default function Reports({
           </div>
         }
       />
-      {reports.data.length === 0 ? (
-        <div className="rounded-lg border bg-card">
-          <EmptyState icon={FileText} title="Nothing to report yet" hint="Calls assigned to your team will appear here." />
-        </div>
-      ) : (
-        <ul className="divide-y rounded-lg border bg-card">
-          {reports.data.map((r) => {
-            const hasDriverForm =
-              r.form?.driver_section &&
-              Object.values(r.form.driver_section).some((v) => v !== null && v !== '');
-            const hasEmergencyForm =
-              r.form?.emergency_section &&
-              Object.values(r.form.emergency_section).some(
-                (v) => v !== null && v !== '' && (typeof v !== 'object' || Object.values(v ?? {}).some(Boolean)),
+      {tab === 'driver' ? (
+        schedules.length === 0 ? (
+          <div className="rounded-lg border bg-card">
+            <EmptyState icon={Truck} title="No scheduled services assigned" hint="Driver Tickets are available for scheduled services assigned to your team." />
+          </div>
+        ) : (
+          <ul className="divide-y rounded-lg border bg-card">
+            {schedules.map((s) => {
+              const hasTicket = Boolean(
+                s.driver_ticket && Object.values(s.driver_ticket).some((v) => v !== null && v !== ''),
               );
-            return (
-              <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
-                <div className="min-w-0">
-                  <p className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="font-mono text-xs text-muted-foreground">{r.reference}</span>
-                    <span className="font-medium">{r.incident_type.name}</span>
-                    <StatusBadge value={r.status} />
-                    {tab === 'driver' ? (
+              return (
+                <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <div className="min-w-0">
+                    <p className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-mono text-xs text-muted-foreground">{s.reference}</span>
+                      <span className="font-medium">{s.service_details || s.service_type}</span>
+                      <StatusBadge value={s.status} />
                       <span
                         className={cn(
                           'inline-flex h-5 items-center rounded-sm px-1.5 text-xs font-medium',
-                          hasDriverForm ? 'bg-ok-soft text-ok' : 'bg-warning-soft text-warning',
+                          hasTicket ? 'bg-ok-soft text-ok' : 'bg-warning-soft text-warning',
                         )}
                       >
-                        {hasDriverForm ? 'Driver Form saved' : 'Driver Form pending'}
+                        {hasTicket ? 'Driver Ticket saved' : 'Driver Ticket pending'}
                       </span>
-                    ) : (
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {s.resident || 'Resident'} · {s.preferred_date} {s.preferred_time} · {s.address}
+                    </p>
+                  </div>
+                  <Button variant={hasTicket ? 'outline' : 'default'} onClick={() => openDriverTicket(s)}>
+                    <Pencil aria-hidden="true" />
+                    {hasTicket ? 'Edit Driver Ticket' : 'Fill Driver Ticket'}
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        )
+      ) : reports.data.length === 0 ? (
+        <div className="rounded-lg border bg-card">
+          <EmptyState icon={FileText} title="Nothing to report yet" hint="Emergency calls assigned to your team will appear here." />
+        </div>
+      ) : (
+        <>
+          <ul className="divide-y rounded-lg border bg-card">
+            {reports.data.map((r) => {
+              const hasEmergencyForm =
+                r.form?.emergency_section &&
+                Object.values(r.form.emergency_section).some(
+                  (v) => v !== null && v !== '' && (typeof v !== 'object' || Object.values(v ?? {}).some(Boolean)),
+                );
+              return (
+                <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <div className="min-w-0">
+                    <p className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-mono text-xs text-muted-foreground">{r.reference}</span>
+                      <span className="font-medium">{r.incident_type.name}</span>
+                      <StatusBadge value={r.status} />
                       <span
                         className={cn(
                           'inline-flex h-5 items-center rounded-sm px-1.5 text-xs font-medium',
                           hasEmergencyForm ? 'bg-ok-soft text-ok' : 'bg-warning-soft text-warning',
                         )}
                       >
-                        {hasEmergencyForm ? 'Emergency Report saved' : 'Emergency Report pending'}
+                        {hasEmergencyForm ? 'Emergency Form saved' : 'Emergency Form pending'}
                       </span>
-                    )}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">{r.location}</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {tab === 'driver' ? (
-                    <Button variant={hasDriverForm ? 'outline' : 'default'} onClick={() => openDriverForm(r)}>
-                      <Pencil aria-hidden="true" />
-                      {hasDriverForm ? 'Edit Driver Form' : 'Fill Driver Form'}
-                    </Button>
-                  ) : (
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">{r.location}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
                     <Button variant={hasEmergencyForm ? 'outline' : 'default'} onClick={() => openEmergencyForm(r)}>
                       <Pencil aria-hidden="true" />
-                      {hasEmergencyForm ? 'Edit Emergency Report' : 'Fill Emergency Report'}
+                      {hasEmergencyForm ? 'Edit Emergency Form' : 'Fill Emergency Form'}
                     </Button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <ServerPagination page={reports} noun="report" />
+        </>
       )}
-      <ServerPagination page={reports} noun="report" />
 
-      {/* Dedicated Driver Form Dialog */}
-      <Dialog open={!!driverRep} onOpenChange={(o) => !o && setDriverRep(null)}>
+      {/* Dedicated Driver Ticket Dialog (Scheduled Services Only) */}
+      <Dialog open={!!driverSchedule} onOpenChange={(o) => !o && setDriverSchedule(null)}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Driver Form · {driverRep?.reference}</DialogTitle>
+            <DialogTitle>Driver Ticket · {driverSchedule?.reference}</DialogTitle>
             <DialogDescription>
-              Authorization and Fuel log for this dispatch. Some inputs are auto-filled from your active assignment and profile.
+              Trip authorization and fuel log for this scheduled service. Authorized Passenger is auto-filled with the requester&apos;s name.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-5">
@@ -378,20 +427,20 @@ export default function Reports({
             </section>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDriverRep(null)}>
+            <Button variant="outline" onClick={() => setDriverSchedule(null)}>
               Close
             </Button>
             <Button
-              disabled={driverForm.processing || !driverRep || !isDriver}
+              disabled={driverForm.processing || !driverSchedule || !isDriver}
               onClick={() =>
-                driverRep &&
-                driverForm.put(route('driver.reports.form', driverRep.id), {
+                driverSchedule &&
+                driverForm.put(route('driver.schedules.driver-ticket', driverSchedule.id), {
                   preserveScroll: true,
-                  onSuccess: () => setDriverRep(null),
+                  onSuccess: () => setDriverSchedule(null),
                 })
               }
             >
-              {driverForm.processing ? 'Saving…' : 'Save Driver Form'}
+              {driverForm.processing ? 'Saving…' : 'Save Driver Ticket'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -64,6 +64,8 @@ Route::post('/auth/mobile/reset-password', [MobileAccountController::class, 'res
 Route::get('/auth/mobile/policy', [MobileAuthController::class, 'policy'])->name('api.auth.mobile.policy');
 
 Route::post('/auth/mobile/login', [MobileAuthController::class, 'authenticate'])->middleware('throttle:mobile-login')->name('api.auth.mobile.login');
+Route::post('/auth/mobile/register/otp/send', [MobileAuthController::class, 'sendRegistrationOtp'])->middleware('throttle:mobile-otp-send')->name('api.auth.mobile.register.otp.send');
+Route::post('/auth/mobile/register/otp/verify', [MobileAuthController::class, 'verifyRegistrationOtp'])->middleware('throttle:mobile-otp-verify')->name('api.auth.mobile.register.otp.verify');
 Route::post('/auth/mobile/register', [MobileAuthController::class, 'register'])->middleware(['throttle:mobile-register', 'mobile.idempotent'])->name('api.auth.mobile.register');
 
 Route::middleware(['auth:sanctum', 'mobile.session', 'abilities:session'])->prefix('auth/mobile')->name('api.auth.mobile.')->group(function () {
@@ -89,11 +91,14 @@ Route::middleware(['auth:sanctum', 'mobile.session', 'role:driver/responder'])
         Route::post('/broadcasting/auth', [MobileRealtimeController::class, 'authenticate'])->middleware(['abilities:driver-read', 'throttle:60,1']);
         Route::get('/fleet', [MobileRealtimeController::class, 'fleet'])->middleware('abilities:driver-read');
         Route::get('/authored-reports', [MobileRecordsController::class, 'authored'])->middleware('abilities:driver-read');
+        Route::get('/assigned-reports', [MobileRecordsController::class, 'assignedReports'])->middleware('abilities:driver-read');
         Route::get('/notifications', [MobileRecordsController::class, 'inbox'])->middleware('abilities:driver-read');
         Route::patch('/notifications/{notification}/read', [MobileRecordsController::class, 'readInbox'])->middleware('abilities:driver-write');
         Route::get('/schedules', [MobileRecordsController::class, 'driverSchedules'])->middleware('abilities:driver-read');
         Route::patch('/schedules/{schedule}/status', [MobileRecordsController::class, 'progressDriverSchedule'])->middleware('abilities:driver-write');
         Route::patch('/schedules/{schedule}/complete', [MobileRecordsController::class, 'completeDriverSchedule'])->middleware('abilities:driver-write');
+        Route::get('/schedules/{schedule}/driver-ticket', [MobileRecordsController::class, 'scheduleDriverTicket'])->middleware('abilities:driver-read');
+        Route::put('/schedules/{schedule}/driver-ticket', [MobileRecordsController::class, 'saveScheduleDriverTicket'])->middleware('abilities:driver-write');
         Route::get('/schedules/{schedule}', [MobileRecordsController::class, 'driverSchedule'])->middleware('abilities:driver-read');
         Route::get('/reports/{report}', [MobileRecordsController::class, 'report'])->middleware('abilities:driver-read');
         Route::get('/reports/{report}/patient', [MobileRecordsController::class, 'patient'])->middleware('abilities:driver-read');

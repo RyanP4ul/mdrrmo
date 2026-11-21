@@ -219,6 +219,7 @@ class ArchiveService
             foreach ($due as $record) {
                 if ($record instanceof IncidentType && $record->reports()->withTrashed()->exists()) {
                     $skipped++;
+
                     continue;
                 }
 
@@ -260,20 +261,21 @@ class ArchiveService
             ]);
         }
 
-        if ($user instanceof DriverResponderUser && $user->activeAssignments()->exists()) {
-            throw ValidationException::withMessages([
-                'user' => 'Cannot archive a responder assigned to an active incident.',
-            ]);
-        }
-
         $name = $user->full_name;
         DB::transaction(function () use ($user, $actor): void {
+            $user = Account::lockForStatusChange($user);
+            if ($user->status !== 'inactive') {
+                throw ValidationException::withMessages(['user' => 'Deactivate this account before moving it to Archives.']);
+            }
+            if ($user instanceof DriverResponderUser && $user->hasActiveEmergencyDispatch()) {
+                throw ValidationException::withMessages(['user' => 'Cannot archive a responder assigned to an active incident.']);
+            }
             $user->tokens()->delete();
             if ($user instanceof DriverResponderUser) {
                 DriverLocation::where('driver_id', $user->getKey())->delete();
             }
             $user->archiveBy($actor);
-        });
+        }, 3);
 
         Audit::record('ARCHIVE_USER', "Archived user {$name}");
     }

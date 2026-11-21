@@ -8,7 +8,9 @@ use App\Models\EmergencyReport;
 use App\Models\IncidentType;
 use App\Models\ResidentUser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -89,6 +91,7 @@ class IncidentReportBroadcastTest extends TestCase
     public function test_guest_report_submission_broadcasts_to_dispatch_channel(): void
     {
         Event::fake([EmergencyReportUpdated::class]);
+        Storage::fake('r2');
 
         $type = $this->incidentType();
 
@@ -101,6 +104,7 @@ class IncidentReportBroadcastTest extends TestCase
             'lat' => 14.8153,
             'lng' => 120.9094,
             'description' => 'Fire reported near plaza.',
+            'photo' => UploadedFile::fake()->image('incident.png'),
         ], ['Idempotency-Key' => (string) Str::uuid()])->assertCreated();
 
         Event::assertDispatched(EmergencyReportUpdated::class, function (EmergencyReportUpdated $event): bool {

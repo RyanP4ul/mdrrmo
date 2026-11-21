@@ -12,6 +12,7 @@ use App\Models\IncidentType;
 use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
 use App\Models\TeamMember;
+use App\Models\Vehicle;
 use App\Services\DispatchService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -115,7 +116,7 @@ class DriverLocationTrackingTest extends TestCase
         Event::assertDispatched(DriverLocationUpdated::class);
     }
 
-    public function test_dispatch_and_response_progress_require_a_responder_account_without_any_vehicle(): void
+    public function test_dispatch_requires_an_assigned_vehicle_before_response_progress(): void
     {
         Event::fake([DriverLocationUpdated::class, EmergencyReportUpdated::class]);
         $driver = DriverResponderUser::factory()->create();
@@ -124,6 +125,18 @@ class DriverLocationTrackingTest extends TestCase
         $type = IncidentType::create(['name' => 'Medical', 'description' => 'Emergency', 'priority' => 'high']);
         $report = EmergencyReport::create(['reference' => 'RPT-DRIVER', 'incident_type_id' => $type->id, 'reported_by' => $driver->id, 'reported_by_type' => $driver->getMorphClass(), 'reporter_name' => $driver->full_name, 'location' => 'Town hall', 'description' => 'Emergency', 'lat' => 14.8, 'lng' => 120.9, 'status' => 'pending', 'priority' => 'high', 'reported_at' => now()]);
         Sanctum::actingAs($driver, ['*']);
+
+        try {
+            app(DispatchService::class)->dispatch($report, $team, $member);
+            $this->fail('Expected dispatch to fail without an assigned vehicle.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertSame(
+                'Rescue needs an assigned vehicle first before it can be dispatched.',
+                $exception->errors()['team'][0] ?? null,
+            );
+        }
+
+        Vehicle::create(['response_team_id' => $team->id, 'plate_number' => 'AMB-RES1', 'vehicle_type' => 'ambulance', 'status' => 'available']);
         app(DispatchService::class)->dispatch($report, $team, $member);
         $this->assertSame($driver->id, $report->fresh()->assigned_driver_id);
         $this->postJson('/api/driver-responder/location/sessions', ['background' => false, 'notice_version' => 'driver-2026-11-04'])->assertCreated();
@@ -133,7 +146,6 @@ class DriverLocationTrackingTest extends TestCase
         $this->patchJson($path, ['response_status' => 'on-scene'])->assertOk()->assertJsonPath('assignment.response_status', 'on-scene');
         $this->patchJson($path, ['response_status' => 'available'])->assertOk()->assertJsonPath('assignment', null);
         $this->assertSame('resolved', $report->fresh()->status);
-        $this->assertDatabaseCount('vehicles', 0);
         Event::assertDispatched(EmergencyReportUpdated::class);
     }
 }

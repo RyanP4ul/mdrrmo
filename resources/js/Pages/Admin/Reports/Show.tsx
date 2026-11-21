@@ -28,15 +28,6 @@ export default function Show({ report: r }: { report: EmergencyReport }) {
   const upd = (patch: Record<string, string>) => router.patch(route('admin.reports.update', r.id), { status: r.status, priority: r.priority, ...patch }, { preserveScroll: true });
   const f = r.form;
   const e = f?.emergency_section ?? {};
-  const victim = (r.victim_info ?? {}) as Record<string, unknown>;
-  const pickVal = (...candidates: unknown[]): string | null => {
-    for (const c of candidates) {
-      if (c !== null && c !== undefined && String(c).trim() !== '') {
-        return String(c).trim();
-      }
-    }
-    return null;
-  };
   const canArchive = r.status === 'resolved' || r.status === 'invalid';
   return (
     <AppLayout>
@@ -83,44 +74,48 @@ export default function Show({ report: r }: { report: EmergencyReport }) {
           <CardHeader><CardTitle>Location</CardTitle></CardHeader>
           <CardContent><LocationMap lat={r.lat} lng={r.lng} label={r.reference} /></CardContent>
         </Card>
-        <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>Emergency Report</CardTitle></CardHeader>
-          <CardContent className="grid gap-x-10 gap-y-6 sm:grid-cols-2">
-            <div>
-              <p className="eyebrow mb-2">Incident &amp; Patient Details</p>
+        {Object.keys(e).length > 0 && (
+          <Card className="lg:col-span-2">
+            <CardHeader><CardTitle>Emergency Form</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
               <dl className="divide-y">
-                <Row k="Time Reported" v={pickVal(e.timeReported, victim.time_reported, r.reported_at ? formatDateTime(r.reported_at) : null)} always />
-                <Row k="Time of arrival on scene" v={pickVal(e.timeOfArrival, victim.time_of_arrival)} always />
-                <Row k="Date" v={pickVal(e.date, victim.date, r.reported_at ? r.reported_at.slice(0, 10) : null)} always />
-                <Row k="Location" v={pickVal(e.location, r.location)} always />
-                <Row k="Name of Patient" v={pickVal(e.patientName, victim.name)} always />
-                <Row k="Age" v={pickVal(e.age, victim.age)} always />
-                <Row k="Sex" v={pickVal(e.sex, victim.sex)} always />
-                <Row k="Address" v={pickVal(e.address, victim.address)} always />
-                <Row k="Type of incident" v={pickVal(e.typeOfIncident, victim.type_of_incident, r.incident_type?.name)} always />
+                <Row k="Time Reported" v={e.timeReported} always />
+                <Row k="Time of Arrival on Scene" v={e.timeOfArrival} always />
+                <Row k="Date" v={e.date} always />
+                <Row k="Location" v={e.location} always />
+                <Row k="Name of Patient" v={e.patientName} always />
+                <Row k="Age" v={e.age} always />
+                <Row k="Sex" v={e.sex} always />
+                <Row k="Address" v={e.address} always />
+                <Row k="Type of Incident" v={e.typeOfIncident} always />
+                <Row k="Allergies" v={e.allergies} always />
+                <Row k="Medication" v={e.medications} always />
+                <Row k="Assessment / Comment" v={e.assessmentComment} always />
+                <Row k="Treatment / Management" v={e.treatmentManagement} always />
               </dl>
-            </div>
-            <div className="space-y-6">
               <div>
-                <p className="eyebrow mb-2">Clinical Assessment &amp; Care</p>
+                <h3 className="eyebrow mb-2">Vital Sign</h3>
                 <dl className="divide-y">
-                  <Row k="Allergies" v={pickVal(e.allergies, victim.allergies)} always />
-                  <Row k="Medication" v={pickVal(e.medications, victim.medications)} always />
-                  <Row k="Assessment / Comment" v={pickVal(e.assessmentComment, victim.assessment_comment, victim.symptoms)} always />
-                  <Row k="Treatment / Management" v={pickVal(e.treatmentManagement, victim.treatment_management)} always />
+                  <Row k="Blood Pressure" v={e.vitalSigns?.bloodPressure} always />
+                  <Row k="Pulse Rate (BPM)" v={e.vitalSigns?.pulseRate} always />
+                  <Row k="Respiration (BPM)" v={e.vitalSigns?.respiration} always />
                 </dl>
               </div>
-              <div>
-                <p className="eyebrow mb-2">Vital Sign</p>
+              <div className="grid gap-x-10 gap-y-4 sm:grid-cols-2">
                 <dl className="divide-y">
-                  <Row k="Blood Pressure" v={pickVal(e.vitalSigns?.bloodPressure, victim.blood_pressure)} always />
-                  <Row k="Pulse Rate (BPM)" v={pickVal(e.vitalSigns?.pulseRate, victim.pulse_rate)} always />
-                  <Row k="Respiration (BPM)" v={pickVal(e.vitalSigns?.respiration, victim.respiration)} always />
+                  <Row k="Endorsed By" v={e.endorsedBy?.name} always />
+                  <Row k="Time" v={e.endorsedBy?.time} always />
+                  <Row k="Date" v={e.endorsedBy?.date} always />
+                </dl>
+                <dl className="divide-y">
+                  <Row k="Endorsed To" v={e.endorsedTo?.name} always />
+                  <Row k="Time" v={e.endorsedTo?.time} always />
+                  <Row k="Date" v={e.endorsedTo?.date} always />
                 </dl>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
         {f && Object.values(f.driver_section ?? {}).some((v) => v !== null && v !== '') && (
           <Card className="lg:col-span-2">
             <CardHeader><CardTitle>Driver Form</CardTitle></CardHeader>

@@ -256,24 +256,28 @@ class VehicleMaintenanceTest extends TestCase
         ])->assertForbidden();
     }
 
-    public function test_dispatcher_can_manage_vehicles_assign_team_vehicle_and_manual_dispatch_team(): void
+    public function test_dispatcher_can_assign_existing_vehicles_but_fleet_management_is_admin_only(): void
     {
         $dispatcher = DispatcherUser::factory()->create(['status' => 'active', 'shift_team' => 'day']);
         $driver1 = DriverResponderUser::factory()->create(['status' => 'active', 'shift_team' => 'day']);
         $responder1 = DriverResponderUser::factory()->create(['status' => 'active', 'shift_team' => 'day']);
         $driver2 = DriverResponderUser::factory()->create(['status' => 'active', 'shift_team' => 'day']);
 
-        // Dispatcher creates vehicles using the 3 allowed types: rescue-truck, ambulance, tow-truck
+        $admin = AdminUser::factory()->create();
         $this->actingAs($dispatcher)
-            ->post(route('dispatcher.vehicles.store'), [
+            ->get('/dispatcher/vehicles')->assertNotFound();
+        $this->post('/dispatcher/vehicles', [])->assertNotFound();
+        $this->post(route('admin.vehicles.store'), [])->assertForbidden();
+        $this->actingAs($admin)
+            ->post(route('admin.vehicles.store'), [
                 'name' => 'Balagtas Rescue 1',
                 'plate_number' => 'RSC-101',
                 'vehicle_type' => 'rescue-truck',
                 'status' => 'available',
             ])->assertSessionHasNoErrors()->assertRedirect();
 
-        $this->actingAs($dispatcher)
-            ->post(route('dispatcher.vehicles.store'), [
+        $this->actingAs($admin)
+            ->post(route('admin.vehicles.store'), [
                 'name' => 'Balagtas Tow 1',
                 'plate_number' => 'TOW-301',
                 'vehicle_type' => 'tow-truck',

@@ -18,7 +18,9 @@ export interface MapDriver {
     eventAt?: string;
     assignedReportId?: number | null;
     id: number;
+    teamId?: number | null;
     teamName: string | null;
+    memberRole?: string | null;
     name: string;
     expiresAt: string;
     lat: number;

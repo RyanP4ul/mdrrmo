@@ -8,8 +8,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class MaintenanceReport extends Model
 {
     public const ISSUE_TYPES = [
-        'Engine / Mechanical',
         'Brakes / Tires',
+        'Change Oil',
+        'Others',
+    ];
+
+    public const LEGACY_ISSUE_TYPES = [
+        'Engine / Mechanical',
         'Electrical / Siren / Lights',
         'Medical Equipment',
         'Preventive / Scheduled',

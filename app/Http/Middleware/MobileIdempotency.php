@@ -16,13 +16,15 @@ class MobileIdempotency
         $key = $request->header('Idempotency-Key');
         validator(['submission_key' => $key], ['submission_key' => ['required', 'uuid']])->validate();
         $user = $request->user();
-        $identity = $request->routeIs('api.guest.reports.store')
+        $guestReport = $request->routeIs('api.guest.reports.store');
+        $identity = $guestReport
             ? 'guest-report'
             : ($user ? $user->getMorphClass().':'.$user->getKey() : 'registration:'.strtolower((string) $request->input('email')));
         $scope = hash('sha256', $identity);
         $payload = array_map(
             fn ($value) => $value instanceof UploadedFile
                 ? ['filename' => $value->getClientOriginalName(), 'size' => $value->getSize()]
+                    + ($guestReport && $value->isValid() ? ['sha256' => hash_file('sha256', $value->getPathname())] : [])
                 : $value,
             $request->all(),
         );

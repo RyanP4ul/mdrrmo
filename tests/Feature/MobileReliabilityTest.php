@@ -10,6 +10,7 @@ use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
 use App\Models\TeamMember;
 use App\Models\Vehicle;
+use App\Services\SmsGatewayService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -98,9 +99,10 @@ class MobileReliabilityTest extends TestCase
 
     public function test_registration_persists_versioned_consent_and_is_safe_to_retry(): void
     {
-        $payload = ['name' => 'Taylor Resident', 'contact' => '0912 345 6789', 'address' => 'Town hall',
-            'email' => 'consent@example.test', 'password' => 'SecurePassword123', 'password_confirmation' => 'SecurePassword123',
-            'consent' => true, 'consent_version' => config('mobile.consent_version')];
+        $otpToken = app(SmsGatewayService::class)->issueVerificationToken('09123456789')['token'];
+        $payload = ['name' => 'Taylor Resident', 'contact' => '0912 345 6789', 'otp_verification_token' => $otpToken,
+            'address' => 'Town hall', 'email' => 'consent@example.test', 'password' => 'SecurePassword123',
+            'password_confirmation' => 'SecurePassword123', 'consent' => true, 'consent_version' => config('mobile.consent_version')];
         $headers = ['Idempotency-Key' => (string) Str::uuid()];
         $this->postJson('/api/auth/mobile/register', $payload, $headers)->assertCreated();
 
@@ -117,8 +119,9 @@ class MobileReliabilityTest extends TestCase
         $payload = ['name' => str_repeat('A', 61).' Resident', 'contact' => '----------', 'address' => 'Town hall',
             'email' => 'invalid@example.test', 'password' => 'SecurePassword123', 'password_confirmation' => 'SecurePassword123'];
         $headers = ['Idempotency-Key' => (string) Str::uuid()];
-        $this->postJson('/api/auth/mobile/register', $payload, $headers)->assertUnprocessable()->assertJsonValidationErrors(['contact', 'consent', 'consent_version']);
+        $this->postJson('/api/auth/mobile/register', $payload, $headers)->assertUnprocessable()->assertJsonValidationErrors(['contact', 'consent', 'consent_version', 'otp_verification_token']);
         $payload['contact'] = '09123456789';
+        $payload['otp_verification_token'] = app(SmsGatewayService::class)->issueVerificationToken('09123456789')['token'];
         $payload['consent'] = true;
         $payload['consent_version'] = config('mobile.consent_version');
         $this->postJson('/api/auth/mobile/register', $payload, $headers)->assertUnprocessable()->assertJsonValidationErrors('name');

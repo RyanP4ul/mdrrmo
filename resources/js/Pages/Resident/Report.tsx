@@ -28,8 +28,7 @@ export default function Report({ types }: { types: { id: number; name: string; d
   const e = form.errors as Record<string, string>;
   const selectedType = types.find((t) => String(t.id) === form.data.incident_type_id);
   const hasLocation = form.data.location.trim().length > 0;
-  const hasDescription = form.data.description.trim().length > 0;
-  const readyCount = [Boolean(selectedType), hasLocation, hasDescription].filter(Boolean).length;
+  const readyCount = [Boolean(selectedType), hasLocation].filter(Boolean).length;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -160,9 +159,8 @@ export default function Report({ types }: { types: { id: number; name: string; d
               </fieldset>
 
               <Field
-                label="What is happening?"
+                label="Additional details (optional)"
                 htmlFor="desc"
-                required
                 error={e.description}
                 hint="Include number of people involved, injuries, or hazards if known."
               >
@@ -186,7 +184,7 @@ export default function Report({ types }: { types: { id: number; name: string; d
                 <ShieldAlert className="size-4 text-destructive" aria-hidden="true" />
                 Report summary
               </CardTitle>
-              <CardDescription>{readyCount} of 3 required details ready</CardDescription>
+              <CardDescription>{readyCount} of 2 required details ready</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 text-sm">
               <dl className="space-y-2.5 divide-y">
@@ -216,7 +214,6 @@ export default function Report({ types }: { types: { id: number; name: string; d
                 {[
                   { ok: Boolean(selectedType), text: 'Select emergency type' },
                   { ok: hasLocation, text: 'Enter or locate address' },
-                  { ok: hasDescription, text: 'Describe the situation' },
                 ].map((item) => (
                   <li key={item.text} className={cn('flex items-center gap-2', item.ok && 'text-foreground font-medium')}>
                     <CheckCircle2 className={cn('size-3.5 shrink-0', item.ok ? 'text-ok' : 'text-muted-foreground/50')} aria-hidden="true" />

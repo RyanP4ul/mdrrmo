@@ -1,5 +1,6 @@
-import { Head, Link, router } from '@inertiajs/react';
+import { Head, Link, router, usePage } from '@inertiajs/react';
 import { route } from 'ziggy-js';
+import { toast } from 'sonner';
 import {
   ArrowLeft,
   Check,
@@ -90,19 +91,13 @@ export default function Show({
   const hasEmergencySection = Boolean(
     f &&
       Object.values(f.emergency_section ?? {}).some(
-        (v) => v !== null && v !== '' && (typeof v !== 'object' || Object.values(v ?? {}).some(Boolean)),
+        (v) =>
+          v !== null &&
+          v !== '' &&
+          (typeof v !== 'object' || Object.values(v ?? {}).some((nested) => nested !== null && String(nested).trim() !== '')),
       ),
   );
   const e = f?.emergency_section ?? {};
-  const victim = (r.victim_info ?? {}) as Record<string, unknown>;
-  const pickVal = (...candidates: unknown[]): string | null => {
-    for (const c of candidates) {
-      if (c !== null && c !== undefined && String(c).trim() !== '') {
-        return String(c).trim();
-      }
-    }
-    return null;
-  };
   const hasDriverSection = Boolean(
     f && Object.values(f.driver_section ?? {}).some((v) => v !== null && v !== ''),
   );
@@ -110,8 +105,20 @@ export default function Show({
     r.victim_info && Object.values(r.victim_info).some((v) => v !== null && String(v).trim() !== ''),
   );
 
+  const { errors = {} } = usePage<{ errors?: Record<string, string> }>().props;
+  const dispatchError = errors.team ?? errors.team_id ?? errors.status ?? null;
   const dispatchSelectedTeam = () =>
-    router.post(route('dispatcher.reports.assign', r.id), { team_id: teamId }, { preserveScroll: true });
+    router.post(
+      route('dispatcher.reports.assign', r.id),
+      { team_id: teamId },
+      {
+        preserveScroll: true,
+        onError: (err) => {
+          const message = err.team ?? err.team_id ?? err.status;
+          if (message) toast.error(message);
+        },
+      },
+    );
 
   return (
     <AppLayout>
@@ -360,23 +367,30 @@ export default function Show({
             </CardHeader>
             <CardContent className="space-y-3">
               {open && (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Select value={teamId} onValueChange={setTeamId}>
-                    <SelectTrigger aria-label="Team" className="w-full">
-                      <SelectValue placeholder="Choose team" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {teams.map((t) => (
-                        <SelectItem key={t.id} value={String(t.id)}>
-                          {t.team_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button type="button" onClick={dispatchSelectedTeam} className="shrink-0">
-                    <Radio aria-hidden="true" />
-                    {team?.assigned ? 'Re-assign' : 'Dispatch'}
-                  </Button>
+                <div className="space-y-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Select value={teamId} onValueChange={setTeamId}>
+                      <SelectTrigger aria-label="Team" className="w-full">
+                        <SelectValue placeholder="Choose team" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {teams.map((t) => (
+                          <SelectItem key={t.id} value={String(t.id)}>
+                            {t.team_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button type="button" onClick={dispatchSelectedTeam} className="shrink-0">
+                      <Radio aria-hidden="true" />
+                      {team?.assigned ? 'Re-assign' : 'Dispatch'}
+                    </Button>
+                  </div>
+                  {dispatchError && (
+                    <p role="alert" className="rounded-md border border-critical/30 bg-critical-soft px-3 py-2 text-xs font-medium text-critical">
+                      {dispatchError}
+                    </p>
+                  )}
                 </div>
               )}
               {team ? (
@@ -477,51 +491,80 @@ export default function Show({
           </Card>
         </div>
 
-        {(hasEmergencySection || hasVictimInfo) && (
-          <Card className="lg:col-span-12">
-            <CardHeader>
-              <CardTitle>Emergency Report</CardTitle>
-              <CardDescription>Clinical assessment and vitals submitted from the field.</CardDescription>
+        {hasEmergencySection && (
+          <Card className="lg:col-span-12 border-t-2 border-t-primary/30">
+            <CardHeader className="border-b bg-muted/20">
+              <CardTitle>Emergency Form</CardTitle>
+              <CardDescription>Patient care and clinical assessment submitted by the responder.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
-                  <p className="eyebrow">Blood Pressure</p>
-                  <p className="mt-0.5 text-base font-semibold tabular-nums">
-                    {pickVal(e.vitalSigns?.bloodPressure, victim.blood_pressure) || '—'}
-                  </p>
+            <CardContent className="space-y-6 pt-5">
+              <div className="grid gap-x-10 gap-y-4 sm:grid-cols-2">
+                <div>
+                  <p className="eyebrow mb-2">Incident &amp; Patient Details</p>
+                  <dl className="divide-y">
+                    <Row k="Time Reported" v={e.timeReported} always />
+                    <Row k="Time of Arrival on Scene" v={e.timeOfArrival} always />
+                    <Row k="Date" v={e.date} always />
+                    <Row k="Location" v={e.location} always />
+                    <Row k="Name of Patient" v={e.patientName} always />
+                    <Row k="Age" v={e.age} always />
+                    <Row k="Sex" v={e.sex} always />
+                    <Row k="Address" v={e.address} always />
+                    <Row k="Type of Incident" v={e.typeOfIncident} always />
+                  </dl>
                 </div>
-                <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
-                  <p className="eyebrow">Pulse Rate (BPM)</p>
-                  <p className="mt-0.5 text-base font-semibold tabular-nums">
-                    {pickVal(e.vitalSigns?.pulseRate, victim.pulse_rate) || '—'}
-                  </p>
-                </div>
-                <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
-                  <p className="eyebrow">Respiration (BPM)</p>
-                  <p className="mt-0.5 text-base font-semibold tabular-nums">
-                    {pickVal(e.vitalSigns?.respiration, victim.respiration) || '—'}
-                  </p>
+                <div>
+                  <p className="eyebrow mb-2">Medical &amp; Care Notes</p>
+                  <dl className="divide-y">
+                    <Row k="Allergies" v={e.allergies} always />
+                    <Row k="Medication" v={e.medications} always />
+                    <Row k="Assessment / Comment" v={e.assessmentComment} always />
+                    <Row k="Treatment / Management" v={e.treatmentManagement} always />
+                  </dl>
                 </div>
               </div>
-              <div className="grid gap-x-10 gap-y-4 sm:grid-cols-2">
-                <dl className="divide-y">
-                  <Row k="Time Reported" v={pickVal(e.timeReported, victim.time_reported, r.reported_at ? formatDateTime(r.reported_at) : null)} always />
-                  <Row k="Time of arrival on scene" v={pickVal(e.timeOfArrival, victim.time_of_arrival)} always />
-                  <Row k="Date" v={pickVal(e.date, victim.date, r.reported_at ? r.reported_at.slice(0, 10) : null)} always />
-                  <Row k="Location" v={pickVal(e.location, r.location)} always />
-                  <Row k="Name of Patient" v={pickVal(e.patientName, victim.name)} always />
-                  <Row k="Age" v={pickVal(e.age, victim.age)} always />
-                  <Row k="Sex" v={pickVal(e.sex, victim.sex)} always />
-                  <Row k="Address" v={pickVal(e.address, victim.address)} always />
-                  <Row k="Type of incident" v={pickVal(e.typeOfIncident, victim.type_of_incident, r.incident_type?.name)} always />
-                </dl>
-                <dl className="divide-y">
-                  <Row k="Allergies" v={pickVal(e.allergies, victim.allergies)} always />
-                  <Row k="Medication" v={pickVal(e.medications, victim.medications)} always />
-                  <Row k="Assessment / Comment" v={pickVal(e.assessmentComment, victim.assessment_comment, victim.symptoms)} always />
-                  <Row k="Treatment / Management" v={pickVal(e.treatmentManagement, victim.treatment_management)} always />
-                </dl>
+
+              <div className="border-t pt-4">
+                <p className="eyebrow mb-3">Vital Signs</p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
+                    <p className="eyebrow">Blood Pressure</p>
+                    <p className="mt-0.5 text-base font-semibold tabular-nums">
+                      {e.vitalSigns?.bloodPressure || '—'}
+                    </p>
+                  </div>
+                  <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
+                    <p className="eyebrow">Pulse Rate (BPM)</p>
+                    <p className="mt-0.5 text-base font-semibold tabular-nums">
+                      {e.vitalSigns?.pulseRate || '—'}
+                    </p>
+                  </div>
+                  <div className="rounded-md border bg-muted/30 px-3.5 py-2.5">
+                    <p className="eyebrow">Respiration (BPM)</p>
+                    <p className="mt-0.5 text-base font-semibold tabular-nums">
+                      {e.vitalSigns?.respiration || '—'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-x-10 gap-y-4 border-t pt-4 sm:grid-cols-2">
+                <div>
+                  <p className="eyebrow mb-2">Endorsed By</p>
+                  <dl className="divide-y">
+                    <Row k="Name" v={e.endorsedBy?.name} always />
+                    <Row k="Time" v={e.endorsedBy?.time} always />
+                    <Row k="Date" v={e.endorsedBy?.date} always />
+                  </dl>
+                </div>
+                <div>
+                  <p className="eyebrow mb-2">Endorsed To</p>
+                  <dl className="divide-y">
+                    <Row k="Name" v={e.endorsedTo?.name} always />
+                    <Row k="Time" v={e.endorsedTo?.time} always />
+                    <Row k="Date" v={e.endorsedTo?.date} always />
+                  </dl>
+                </div>
               </div>
             </CardContent>
           </Card>

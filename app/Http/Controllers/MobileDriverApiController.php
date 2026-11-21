@@ -137,8 +137,9 @@ class MobileDriverApiController extends Controller
         $driver = $request->user();
         $data = $request->validate([
             'vehicle_id' => ['required', 'integer', 'exists:vehicles,id'],
-            'issue_type' => ['required', 'string', Rule::in(MaintenanceReport::ISSUE_TYPES)],
-            'severity' => ['required', 'in:low,medium,high,critical'],
+            'issue_type' => ['required', 'string', Rule::in(array_merge(MaintenanceReport::ISSUE_TYPES, MaintenanceReport::LEGACY_ISSUE_TYPES))],
+            'issue_details' => ['required_if:issue_type,Others', 'nullable', 'string', 'max:255'],
+            'severity' => ['nullable', 'in:low,medium,high,critical'],
             'mileage' => ['nullable', 'integer', 'min:0', 'max:2000000'],
             'description' => ['required', 'string', 'max:2000'],
             'recommend_out_of_service' => ['nullable', 'boolean'],
@@ -354,7 +355,7 @@ class MobileDriverApiController extends Controller
         $priority = $data['priority'] ?? $incidentType->priority ?? 'high';
         $description = trim((string) ($data['assessment_comment'] ?? $data['symptoms'] ?? $data['treatment_management'] ?? $incidentType->name));
 
-        $report = EmergencyReport::query()->create([
+        $report = DB::transaction(fn () => EmergencyReport::query()->create([
             'reference' => 'RPT-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
             'incident_type_id' => $incidentType->getKey(),
             'location' => $data['location'],
@@ -390,7 +391,7 @@ class MobileDriverApiController extends Controller
                 'contact_person' => $data['contact_person'] ?? $driver->full_name,
                 'contact_number' => $data['contact_number'] ?? $driver->contact_number,
             ], fn ($v) => $v !== null),
-        ]);
+        ]));
 
         if (! empty($data['sex']) || ! empty($data['assessment_comment']) || ! empty($data['blood_pressure'])) {
             ReportForm::query()->updateOrCreate(
@@ -466,7 +467,7 @@ class MobileDriverApiController extends Controller
             .($notes !== '' ? " {$notes}" : '')
             .($report->description ? " — Original incident: {$report->description}" : '');
 
-        $backupReport = EmergencyReport::query()->create([
+        $backupReport = DB::transaction(fn () => EmergencyReport::query()->create([
             'reference' => EmergencyReport::generateReference(),
             'incident_type_id' => $report->incident_type_id,
             'location' => $report->location,
@@ -484,7 +485,7 @@ class MobileDriverApiController extends Controller
             'reported_at' => now(),
             'victim_info' => $report->victim_info,
             'witness_info' => $report->witness_info,
-        ]);
+        ]));
 
         DriverNotification::receipt($driver->id, $backupReport, 'backup_requested', 'Backup request sent');
         Audit::record('REQUEST_BACKUP', "Driver {$driver->full_name} requested on-scene backup ({$backupReport->reference}) for {$report->reference}");

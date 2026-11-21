@@ -29,7 +29,7 @@ class SavePatientReportRequest extends FormRequest
             'driver_section.fuelUsedDuringTrip' => ['nullable', 'numeric', 'min:0', 'max:100000'],
             'driver_section.remainingFuel' => ['nullable', 'numeric', 'min:-100000', 'max:100000'],
             'driver_section.gearOilUsed' => ['nullable', 'numeric', 'min:0', 'max:100000'],
-            'emergency_section' => ['required_without:driver_section', 'nullable', 'array:timeReported,timeOfArrival,date,location,patientName,age,sex,address,typeOfIncident,allergies,medications,assessmentComment,treatmentManagement,vitalSigns'],
+            'emergency_section' => ['required_without:driver_section', 'nullable', 'array:timeReported,timeOfArrival,date,location,patientName,age,sex,address,typeOfIncident,allergies,medications,assessmentComment,treatmentManagement,vitalSigns,endorsedBy,endorsedTo'],
             'emergency_section.timeReported' => ['nullable', 'date_format:H:i'],
             'emergency_section.timeOfArrival' => ['nullable', 'date_format:H:i'],
             'emergency_section.date' => ['nullable', 'string', 'max:40'],
@@ -43,10 +43,18 @@ class SavePatientReportRequest extends FormRequest
             'emergency_section.medications' => ['nullable', 'string', 'max:1000'],
             'emergency_section.assessmentComment' => ['nullable', 'string', 'max:2000'],
             'emergency_section.treatmentManagement' => ['nullable', 'string', 'max:2000'],
-            'emergency_section.vitalSigns' => ['required_without:driver_section', 'required_with:emergency_section', 'array:bloodPressure,pulseRate,respiration'],
+            'emergency_section.vitalSigns' => ['nullable', 'array:bloodPressure,pulseRate,respiration'],
             'emergency_section.vitalSigns.bloodPressure' => ['nullable', 'string', 'max:40'],
             'emergency_section.vitalSigns.pulseRate' => ['nullable', 'string', 'max:40'],
             'emergency_section.vitalSigns.respiration' => ['nullable', 'string', 'max:40'],
+            'emergency_section.endorsedBy' => ['nullable', 'array:name,time,date'],
+            'emergency_section.endorsedBy.name' => ['nullable', 'string', 'max:120'],
+            'emergency_section.endorsedBy.time' => ['nullable', 'date_format:H:i'],
+            'emergency_section.endorsedBy.date' => ['nullable', 'date_format:Y-m-d'],
+            'emergency_section.endorsedTo' => ['nullable', 'array:name,time,date'],
+            'emergency_section.endorsedTo.name' => ['nullable', 'string', 'max:120'],
+            'emergency_section.endorsedTo.time' => ['nullable', 'date_format:H:i'],
+            'emergency_section.endorsedTo.date' => ['nullable', 'date_format:Y-m-d'],
         ];
     }
 }

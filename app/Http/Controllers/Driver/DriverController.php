@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Driver;
 
 use App\Events\DriverLocationUpdated;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\SaveDriverTicketRequest;
 use App\Http\Requests\SavePatientReportRequest;
 use App\Http\Requests\StoreDriverLocationPingRequest;
 use App\Models\DriverLocation;
@@ -12,10 +13,13 @@ use App\Models\EmergencyReport;
 use App\Models\MaintenanceReport;
 use App\Models\ReportForm;
 use App\Models\ResponseTeam;
+use App\Models\ServiceSchedule;
+use App\Models\ServiceScheduleDriverTicket;
 use App\Services\DriverResponseProgress;
 use App\Services\EmergencyReportWorkflow;
 use App\Services\TeamRoles;
 use App\Services\VehicleMaintenanceService;
+use App\Support\Audit;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -30,12 +34,7 @@ class DriverController extends Controller
         $userId = $r->user()->id;
 
         return EmergencyReport::with(['incidentType:id,name,color', 'team:id,team_name'])
-            ->where(function ($query) use ($userId): void {
-                $query->where('assigned_driver_id', $userId)
-                    ->orWhereHas('team', fn ($team) => $team
-                        ->where('status', 'active')
-                        ->whereHas('members', fn ($m) => $m->where('user_id', $userId)->where('status', 'active')));
-            });
+            ->assignedToResponder($userId);
     }
 
     public function dashboard(Request $request, TeamRoles $roles)
@@ -101,6 +100,35 @@ class DriverController extends Controller
         $teamRoles = $roles->memberships($user);
         $isDriver = empty($teamRoles) || collect($teamRoles)->contains('role', 'Driver');
 
+        $schedules = ServiceSchedule::query()
+            ->whereHas('responders', fn ($query) => $query->whereKey($user->id))
+            ->with(['resident:id,first_name,last_name,contact_number', 'team.vehicles', 'team.activeVehicle', 'driverTicket'])
+            ->orderByDesc('preferred_date')
+            ->orderByDesc('preferred_time')
+            ->limit(25)
+            ->get()
+            ->map(function (ServiceSchedule $schedule): array {
+                $vehicle = $schedule->team?->resolveActiveVehicle();
+
+                return [
+                    'id' => $schedule->id,
+                    'reference' => 'SCH-'.str_pad((string) $schedule->id, 5, '0', STR_PAD_LEFT),
+                    'service_type' => $schedule->service_type,
+                    'service_details' => $schedule->service_details,
+                    'preferred_date' => $schedule->preferred_date?->toDateString(),
+                    'preferred_time' => Carbon::parse($schedule->preferred_time)->format('H:i'),
+                    'address' => $schedule->address,
+                    'destination_address' => $schedule->destination_address,
+                    'status' => $schedule->status,
+                    'resident' => $schedule->resident?->full_name,
+                    'team_name' => $schedule->team?->team_name,
+                    'vehicle' => $vehicle ? ($vehicle->name ? "{$vehicle->plate_number} · {$vehicle->name}" : $vehicle->plate_number) : null,
+                    'driver_ticket' => $schedule->driverTicket?->driver_section,
+                ];
+            })
+            ->values()
+            ->all();
+
         return Inertia::render('Driver/Reports', [
             'reports' => $this->mine($request)
                 ->whereIn('status', ['dispatched', 'resolved'])
@@ -108,9 +136,39 @@ class DriverController extends Controller
                 ->latest('reported_at')
                 ->paginate(6)
                 ->withQueryString(),
+            'schedules' => $schedules,
             'isDriver' => $isDriver,
             'teamRoles' => $teamRoles,
         ]);
+    }
+
+    public function saveScheduleDriverTicket(SaveDriverTicketRequest $request, ServiceSchedule $schedule)
+    {
+        abort_unless($schedule->responders()->whereKey($request->user()->id)->exists(), 404);
+        $schedule->loadMissing('team.members');
+        if ($schedule->team?->member_roles_enabled) {
+            $isTeamDriver = $schedule->team->members()
+                ->where('user_id', $request->user()->id)
+                ->where('status', 'active')
+                ->where('role', 'Driver')
+                ->exists();
+            abort_unless($isTeamDriver, 403, 'Only the team Driver can submit a Driver Ticket.');
+        }
+
+        $existing = $schedule->driverTicket;
+        $driverSection = array_merge($existing?->driver_section ?? [], $request->validated('driver_section'));
+
+        ServiceScheduleDriverTicket::updateOrCreate(
+            ['service_schedule_id' => $schedule->id],
+            [
+                'driver_id' => $request->user()->id,
+                'driver_section' => $driverSection,
+            ],
+        );
+
+        Audit::record('UPDATE_SCHEDULE_DRIVER_TICKET', "Driver saved Driver Ticket for schedule #{$schedule->id}");
+
+        return back()->with('success', 'Driver Ticket saved.');
     }
 
     public function saveForm(SavePatientReportRequest $request, EmergencyReport $report)
@@ -121,9 +179,7 @@ class DriverController extends Controller
         $driverSection = array_key_exists('driver_section', $validated) && is_array($validated['driver_section'])
             ? array_merge($existing?->driver_section ?? [], $validated['driver_section'])
             : ($existing?->driver_section ?? []);
-        $emergencySection = array_key_exists('emergency_section', $validated) && is_array($validated['emergency_section'])
-            ? array_merge($existing?->emergency_section ?? [], $validated['emergency_section'])
-            : ($existing?->emergency_section ?? []);
+        $emergencySection = ReportForm::mergeEmergencySection($existing?->emergency_section ?? [], $validated['emergency_section'] ?? []);
         ReportForm::updateOrCreate(
             ['emergency_report_id' => $report->id],
             [
@@ -204,8 +260,9 @@ class DriverController extends Controller
     {
         $data = $request->validate([
             'vehicle_id' => ['required', 'integer', 'exists:vehicles,id'],
-            'issue_type' => ['required', 'string', Rule::in(MaintenanceReport::ISSUE_TYPES)],
-            'severity' => ['required', 'in:low,medium,high,critical'],
+            'issue_type' => ['required', 'string', Rule::in(array_merge(MaintenanceReport::ISSUE_TYPES, MaintenanceReport::LEGACY_ISSUE_TYPES))],
+            'issue_details' => ['required_if:issue_type,Others', 'nullable', 'string', 'max:255'],
+            'severity' => ['nullable', 'in:low,medium,high,critical'],
             'mileage' => ['nullable', 'integer', 'min:0', 'max:2000000'],
             'description' => ['required', 'string', 'max:2000'],
             'recommend_out_of_service' => ['nullable', 'boolean'],

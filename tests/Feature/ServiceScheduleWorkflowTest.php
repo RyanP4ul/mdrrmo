@@ -196,4 +196,42 @@ class ServiceScheduleWorkflowTest extends TestCase
         $this->assertDatabaseCount('service_schedules', 1);
         $this->assertDatabaseCount('resident_notifications', 0);
     }
+
+    public function test_only_the_team_driver_can_start_or_progress_a_scheduled_service_trip(): void
+    {
+        $this->travelTo(Carbon::parse('2030-01-02 08:00', 'Asia/Manila'));
+        $driver = DriverResponderUser::factory()->create(['status' => 'active']);
+        $responder = DriverResponderUser::factory()->create(['status' => 'active']);
+        $team = ResponseTeam::create(['team_name' => 'Paired Team', 'status' => 'active', 'member_roles_enabled' => false]);
+        TeamMember::create(['response_team_id' => $team->id, 'user_id' => $driver->id, 'name' => $driver->full_name, 'role' => 'Driver', 'status' => 'active']);
+        TeamMember::create(['response_team_id' => $team->id, 'user_id' => $responder->id, 'name' => $responder->full_name, 'role' => 'Responder', 'status' => 'active']);
+
+        $schedule = $this->schedule();
+        Sanctum::actingAs(DispatcherUser::factory()->create(), ['*']);
+        $this->patchJson('/api/operations/schedules/'.$schedule->id, ['decision' => 'confirmed', 'team_id' => $team->id])->assertOk();
+
+        // Responder sees can_control_trip=false and cannot start, mark on-scene, or complete the service.
+        Sanctum::actingAs($responder, ['*']);
+        $url = '/api/driver-responder/schedules/'.$schedule->id;
+        $this->getJson($url)->assertOk()->assertJsonPath('can_control_trip', false);
+        $this->patchJson($url.'/status', ['status' => 'en-route'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['status' => 'Only the team Driver can start a service trip.']);
+        $this->patchJson($url.'/complete')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['status' => 'Only the team Driver can update a service trip.']);
+        $this->assertSame('confirmed', $schedule->fresh()->status);
+
+        // Driver sees can_control_trip=true and can start the trip.
+        Sanctum::actingAs($driver, ['*']);
+        $this->getJson($url)->assertOk()->assertJsonPath('can_control_trip', true);
+        $this->patchJson($url.'/status', ['status' => 'en-route'])->assertOk()->assertJsonPath('status', 'en-route');
+
+        // Responder still cannot advance to on-scene or complete after Driver starts it.
+        Sanctum::actingAs($responder, ['*']);
+        $this->patchJson($url.'/status', ['status' => 'on-scene'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['status' => 'Only the team Driver can update a service trip.']);
+        $this->assertSame('en-route', $schedule->fresh()->status);
+    }
 }

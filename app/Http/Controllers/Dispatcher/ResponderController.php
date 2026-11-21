@@ -73,13 +73,14 @@ class ResponderController extends Controller
             'vehicles' => Vehicle::query()
                 ->with('team:id,team_name')
                 ->orderBy('plate_number')
-                ->get(['id', 'name', 'plate_number', 'vehicle_type', 'status', 'response_team_id'])
+                ->get(['id', 'name', 'plate_number', 'vehicle_type', 'status', 'response_team_id', 'assigned_report_id'])
                 ->map(fn (Vehicle $vehicle): array => [
                     'id' => $vehicle->id,
                     'name' => $vehicle->name ?: ucfirst(str_replace('-', ' ', $vehicle->vehicle_type)).' '.$vehicle->plate_number,
                     'plate_number' => $vehicle->plate_number,
                     'vehicle_type' => $vehicle->vehicle_type,
                     'status' => $vehicle->status,
+                    'assignable' => $vehicle->status === 'available' && $vehicle->assigned_report_id === null,
                     'response_team_id' => $vehicle->response_team_id,
                     'team_name' => $vehicle->team?->team_name,
                 ]),
@@ -115,11 +116,13 @@ class ResponderController extends Controller
             $team->members()->createMany($data['members']);
             if (array_key_exists('driver_user_id', $data)) {
                 app(TeamRoles::class)->reassign($team, $data['driver_user_id']);
+            } else {
+                app(TeamRoles::class)->normalizePair($team);
             }
             if (array_key_exists('vehicle_id', $data)) {
                 $this->syncTeamVehicle($team, $data['vehicle_id']);
             }
-        });
+        }, 3);
         Audit::record('CREATE_TEAM', "Created team {$data['team_name']}");
 
         return back()->with('success', 'Team created.');
@@ -168,11 +171,13 @@ class ResponderController extends Controller
             }
             if (array_key_exists('driver_user_id', $data)) {
                 app(TeamRoles::class)->reassign($lockedTeam, $data['driver_user_id']);
+            } else {
+                app(TeamRoles::class)->normalizePair($lockedTeam);
             }
             if (array_key_exists('vehicle_id', $data)) {
                 $this->syncTeamVehicle($lockedTeam, $data['vehicle_id']);
             }
-        });
+        }, 3);
         Audit::record('UPDATE_TEAM', "Updated team {$data['team_name']}");
 
         return back()->with('success', 'Team updated.');
@@ -399,6 +404,13 @@ class ResponderController extends Controller
     private function syncTeamVehicle(ResponseTeam $team, ?int $vehicleId): void
     {
         $lockedTeam = ResponseTeam::query()->lockForUpdate()->findOrFail($team->getKey());
+        if ($lockedTeam->resolveActiveVehicle()?->id === $vehicleId) {
+            return;
+        }
+        $roles = app(TeamRoles::class);
+        if ($roles->busy($lockedTeam) || $lockedTeam->vehicles()->whereNotNull('assigned_report_id')->exists()) {
+            throw ValidationException::withMessages(['vehicle_id' => 'Complete the active trip before changing the assigned vehicle.']);
+        }
 
         if ($vehicleId === null) {
             Vehicle::query()
@@ -411,13 +423,13 @@ class ResponderController extends Controller
         }
 
         $vehicle = Vehicle::query()->lockForUpdate()->findOrFail($vehicleId);
-        if ($vehicle->status === 'maintenance') {
-            throw ValidationException::withMessages([
-                'vehicle_id' => 'Cannot assign a vehicle that is currently under maintenance.',
-            ]);
-        }
-
         $previousTeamId = $vehicle->response_team_id;
+        $oldTeam = $previousTeamId && $previousTeamId !== $lockedTeam->id
+            ? ResponseTeam::query()->lockForUpdate()->find($previousTeamId) : null;
+        if ($vehicle->status !== 'available' || $vehicle->assigned_report_id !== null
+            || ($oldTeam && $oldTeam->resolveActiveVehicle()?->id === $vehicle->id && $roles->busy($oldTeam))) {
+            throw ValidationException::withMessages(['vehicle_id' => 'Choose a vehicle that is available and free of active trips.']);
+        }
 
         Vehicle::query()
             ->where('response_team_id', $lockedTeam->id)
@@ -428,16 +440,13 @@ class ResponderController extends Controller
         $vehicle->update(['response_team_id' => $lockedTeam->id]);
         $lockedTeam->update(['active_vehicle_id' => $vehicle->id]);
 
-        if ($previousTeamId && $previousTeamId !== $lockedTeam->id) {
-            $oldTeam = ResponseTeam::query()->lockForUpdate()->find($previousTeamId);
-            if ($oldTeam && $oldTeam->active_vehicle_id === $vehicle->id) {
-                $fallback = Vehicle::query()
-                    ->where('response_team_id', $oldTeam->id)
-                    ->where('status', 'available')
-                    ->orderBy('id')
-                    ->first();
-                $oldTeam->update(['active_vehicle_id' => $fallback?->id]);
-            }
+        if ($oldTeam?->active_vehicle_id === $vehicle->id) {
+            $fallback = Vehicle::query()
+                ->where('response_team_id', $oldTeam->id)
+                ->where('status', 'available')
+                ->orderBy('id')
+                ->first();
+            $oldTeam->update(['active_vehicle_id' => $fallback?->id]);
         }
     }
 

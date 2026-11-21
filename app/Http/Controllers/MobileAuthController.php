@@ -7,6 +7,8 @@ use App\Models\Account;
 use App\Models\DriverLocation;
 use App\Models\ResidentUser;
 use App\Models\User;
+use App\Services\SmsGatewayException;
+use App\Services\SmsGatewayService;
 use App\Support\MobileValidation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,7 +30,62 @@ class MobileAuthController extends Controller
         'Passport',
     ];
 
-    public function register(Request $request): JsonResponse
+    public function sendRegistrationOtp(Request $request, SmsGatewayService $smsGateway): JsonResponse
+    {
+        MobileValidation::normalizePhone($request, 'contact');
+        $data = $request->validate([
+            'contact' => MobileValidation::phoneRules(),
+        ]);
+
+        $remaining = $smsGateway->resendCooldownRemaining($data['contact']);
+        if ($remaining > 0) {
+            return response()->json([
+                'message' => "Please wait {$remaining} seconds before requesting another verification code.",
+                'retry_after' => $remaining,
+            ], 429)->header('Retry-After', (string) $remaining);
+        }
+
+        try {
+            $result = $smsGateway->sendOtp($data['contact']);
+        } catch (SmsGatewayException $e) {
+            return $this->smsGatewayErrorResponse($e);
+        }
+
+        return response()->json([
+            'message' => 'Verification code sent to your mobile number.',
+            'otp_length' => $result['otp_length'],
+            'expires_at' => $result['expires_at'],
+            'resend_after_seconds' => $result['resend_after_seconds'],
+        ]);
+    }
+
+    public function verifyRegistrationOtp(Request $request, SmsGatewayService $smsGateway): JsonResponse
+    {
+        MobileValidation::normalizePhone($request, 'contact');
+        $data = $request->validate([
+            'contact' => MobileValidation::phoneRules(),
+            'code' => ['required', 'string', 'regex:/^\d{4,8}$/'],
+        ], [
+            'code.regex' => 'Enter a valid numeric verification code.',
+        ]);
+
+        try {
+            $smsGateway->verifyOtp($data['contact'], $data['code']);
+        } catch (SmsGatewayException $e) {
+            return $this->smsGatewayErrorResponse($e);
+        }
+
+        $issued = $smsGateway->issueVerificationToken($data['contact']);
+
+        return response()->json([
+            'verified' => true,
+            'verification_token' => $issued['token'],
+            'expires_in' => $issued['expires_in'],
+            'message' => 'Phone number verified.',
+        ]);
+    }
+
+    public function register(Request $request, SmsGatewayService $smsGateway): JsonResponse
     {
         MobileValidation::normalizePhone($request, 'contact');
         $data = $request->validate([
@@ -36,6 +93,7 @@ class MobileAuthController extends Controller
             'first_name' => ['required_without:name', 'nullable', 'string', 'max:60'],
             'last_name' => ['required_without:name', 'nullable', 'string', 'max:60'],
             'contact' => MobileValidation::phoneRules(),
+            'otp_verification_token' => ['required', 'string', 'min:32', 'max:255'],
             'address' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255'],
             'password' => ['required', 'string', 'min:8', 'max:128', 'confirmed'],
@@ -43,7 +101,15 @@ class MobileAuthController extends Controller
             'consent_version' => ['required', Rule::in([config('mobile.consent_version')])],
             'id_type' => ['nullable', 'string', Rule::in(self::RESIDENT_ID_TYPES)],
             'id_photo' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
+        ], [
+            'otp_verification_token.required' => 'Please verify your contact number with the SMS code before submitting.',
         ]);
+
+        if (! $smsGateway->matchesVerifiedPhone($data['otp_verification_token'], $data['contact'])) {
+            throw ValidationException::withMessages([
+                'otp_verification_token' => 'Your phone verification has expired or does not match this contact number. Please verify again.',
+            ]);
+        }
 
         if (! empty($data['first_name']) && ! empty($data['last_name'])) {
             $firstName = preg_replace('/\s+/', ' ', trim((string) $data['first_name']));
@@ -114,9 +180,21 @@ class MobileAuthController extends Controller
             throw $e;
         }
 
+        $smsGateway->consumeVerificationToken($data['otp_verification_token']);
+
         return response()->json([
             'message' => 'Registration submitted. Your account is waiting for review.',
         ], 201);
+    }
+
+    private function smsGatewayErrorResponse(SmsGatewayException $e): JsonResponse
+    {
+        $payload = ['message' => $e->getMessage()] + $e->extra;
+        if ($e->statusCode === 422 && $e->field !== null) {
+            $payload['errors'] = [$e->field => [$e->getMessage()]];
+        }
+
+        return response()->json($payload, $e->statusCode);
     }
 
     public function authenticate(Request $request): JsonResponse

@@ -1,10 +1,12 @@
-import { Head, router, usePoll } from "@inertiajs/react";
+import { Head, Link, router, usePoll } from "@inertiajs/react";
 import { route } from "ziggy-js";
 import {
     CalendarDays,
     Check,
     ChevronLeft,
     ChevronRight,
+    FileText,
+    Truck,
     X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -38,6 +40,8 @@ interface S {
     id: number;
     date: string;
     service_type: string;
+    service_details?: string | null;
+    destination_address?: string | null;
     preferred_time: string;
     address: string;
     notes: string | null;
@@ -47,6 +51,7 @@ interface S {
     decline_reason: string | null;
     team_name: string | null;
     needs_assignment: boolean;
+    has_driver_ticket?: boolean;
 }
 
 interface Team {
@@ -282,7 +287,7 @@ export default function Schedule({
                             >
                                 <div className="flex items-start justify-between gap-2">
                                     <p className="font-medium">
-                                        {s.service_type}
+                                        {s.service_details || s.service_type}
                                     </p>
                                     <StatusBadge value={s.status} />
                                 </div>
@@ -293,6 +298,7 @@ export default function Schedule({
                                 <p className="text-xs text-muted-foreground">
                                     {s.date} · {s.preferred_time} · {s.address}
                                 </p>
+                                {s.destination_address && <p className="text-xs">Destination: {s.destination_address}</p>}
                                 {s.notes && (
                                     <p className="text-xs">{s.notes}</p>
                                 )}
@@ -302,6 +308,23 @@ export default function Schedule({
                                         Declined: {s.decline_reason}
                                     </p>
                                 )}
+                                <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <Button asChild size="sm" variant="outline">
+                                        <Link href={route("dispatcher.schedules.show", s.id)}>
+                                            {s.has_driver_ticket ? (
+                                                <>
+                                                    <Truck className="mr-1 size-3 text-ok" />
+                                                    Report &amp; Driver Ticket
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <FileText className="mr-1 size-3" />
+                                                    View report
+                                                </>
+                                            )}
+                                        </Link>
+                                    </Button>
+                                </div>
                                 {(["pending", "acknowledged"].includes(s.status) || (s.status === "confirmed" && s.needs_assignment)) && (
                                     <div className="flex flex-wrap gap-2 pt-1">
                                         {s.status === "pending" ? <Button size="sm" disabled={acknowledging === s.id} onClick={() => {

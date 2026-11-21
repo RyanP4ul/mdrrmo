@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\Archivable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -72,6 +73,16 @@ class EmergencyReport extends Model
     public function scopeActive($q)
     {
         return $q->whereIn('status', ['pending', 'acknowledged', 'dispatched']);
+    }
+
+    public function scopeAssignedToResponder(Builder $query, int $userId): Builder
+    {
+        return $query->where(function (Builder $assigned) use ($userId): void {
+            $assigned->where('assigned_driver_id', $userId)
+                ->orWhereHas('team', fn (Builder $team) => $team
+                    ->where('status', 'active')
+                    ->whereHas('members', fn (Builder $member) => $member->where('user_id', $userId)->where('status', 'active')));
+        });
     }
 
     public function scopeWithDriverForm($query)

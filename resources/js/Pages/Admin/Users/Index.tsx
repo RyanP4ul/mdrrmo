@@ -12,6 +12,7 @@ import {
     X,
 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { route } from "ziggy-js";
 import AppLayout from "@/Layouts/AppLayout";
 import { PageHeader } from "@/components/PageHeader";
@@ -195,7 +196,7 @@ export default function Index({ employees, residents, filters, counts }: Props) 
         router.patch(
             route("admin.users.status", u.account_key),
             { status: u.status === "active" ? "inactive" : "active" },
-            { preserveScroll: true },
+            { preserveScroll: true, onError: (errors) => toast.error(errors.status || "Could not update account status.") },
         );
     const pick = (k: string) => (v: string) =>
         set(k as "role", v === "all" ? "" : v);
@@ -350,7 +351,8 @@ export default function Index({ employees, residents, filters, counts }: Props) 
                                                         <Button
                                                             variant="ghost"
                                                             size="icon"
-                                                            aria-label={`Delete ${u.full_name}`}
+                                                            aria-label={`Archive ${u.full_name}`}
+                                                            disabled={u.status !== "inactive"}
                                                             className="text-destructive"
                                                             onClick={() =>
                                                                 setDel(u)
@@ -456,7 +458,8 @@ export default function Index({ employees, residents, filters, counts }: Props) 
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        aria-label="Delete"
+                                                        aria-label={`Archive ${u.full_name}`}
+                                                        disabled={u.status !== "inactive"}
                                                         className="text-destructive"
                                                         onClick={() =>
                                                             setDel(u)
@@ -845,9 +848,12 @@ export default function Index({ employees, residents, filters, counts }: Props) 
                 onConfirm={() => {
                     router.delete(
                         route("admin.users.destroy", del!.account_key),
-                        { preserveScroll: true },
+                        {
+                            preserveScroll: true,
+                            onSuccess: () => setDel(null),
+                            onError: (errors) => toast.error(errors.user || "Could not archive this account."),
+                        },
                     );
-                    setDel(null);
                 }}
             />
         </AppLayout>

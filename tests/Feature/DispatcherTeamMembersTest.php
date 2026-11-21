@@ -7,6 +7,7 @@ use App\Models\DriverResponderUser;
 use App\Models\IncidentType;
 use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
+use App\Models\Vehicle;
 use App\Services\DispatchService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -28,6 +29,7 @@ class DispatcherTeamMembersTest extends TestCase
 
         $driver = DriverResponderUser::factory()->create();
         $eligible = ResponseTeam::create(['team_name' => 'Eligible', 'status' => 'active']);
+        Vehicle::create(['response_team_id' => $eligible->id, 'plate_number' => 'AMB-ELIG1', 'vehicle_type' => 'ambulance', 'status' => 'available']);
         $eligible->members()->create(['user_id' => $driver->id, 'name' => $driver->full_name, 'status' => 'active']);
 
         $this->assertSame($eligible->id, $service->autoAssignTeam()->id);

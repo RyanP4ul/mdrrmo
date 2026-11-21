@@ -5,10 +5,14 @@ namespace App\Http\Controllers;
 use App\Events\EmergencyReportUpdated;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
+use Illuminate\Broadcasting\BroadcastException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
+use Throwable;
 
 class GuestReportController extends Controller
 {
@@ -41,7 +45,8 @@ class GuestReportController extends Controller
             'location' => ['required', 'string', 'max:255'],
             'lat' => ['required', 'numeric', 'between:-90,90'],
             'lng' => ['required', 'numeric', 'between:-180,180'],
-            'description' => ['required', 'string', 'max:2000'],
+            'description' => ['nullable', 'string', 'max:2000'],
+            'photo' => [config('mobile.guest_photo_required') ? 'required' : 'nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
         ]);
         if (! empty($data['incident_type_id'])) {
             $type = IncidentType::query()->findOrFail($data['incident_type_id']);
@@ -57,17 +62,33 @@ class GuestReportController extends Controller
             $data['incident_type_id'] = $type->id;
         }
         unset($data['incident_type_name']);
-        $report = EmergencyReport::query()->create($data + [
-            'reference' => EmergencyReport::generateReference(),
-            'status' => 'pending',
-            'priority' => $type->priority,
-            'source' => 'mobile-app',
-            'reported_by' => null,
-            'reported_by_type' => null,
-            'reported_at' => now(),
-        ]);
+        unset($data['photo']);
+        $data['description'] ??= '';
+        $photoPath = $request->file('photo')?->store('incident-photos', 'r2');
+        abort_if($photoPath === false, 503, 'The incident photo could not be saved. Please retry.');
+        try {
+            $report = DB::transaction(fn () => EmergencyReport::query()->create($data + [
+                'reference' => EmergencyReport::generateReference(),
+                'status' => 'pending',
+                'priority' => $type->priority,
+                'source' => 'mobile-app',
+                'reported_by' => null,
+                'reported_by_type' => null,
+                'reported_at' => now(),
+                'photo_path' => $photoPath,
+            ]));
+        } catch (Throwable $error) {
+            if ($photoPath !== null) {
+                Storage::disk('r2')->delete($photoPath);
+            }
+            throw $error;
+        }
 
-        EmergencyReportUpdated::dispatch($report, null, true);
+        try {
+            EmergencyReportUpdated::dispatch($report, null, true);
+        } catch (BroadcastException $error) {
+            report($error);
+        }
 
         return response()->json([
             'reference' => $report->reference,

@@ -51,16 +51,26 @@ class DashboardController extends Controller
             })
             ->values();
 
+        $autoVehicle = $team?->resolveActiveVehicle();
+        $autoVehicleLabel = $autoVehicle
+            ? ($autoVehicle->name ?: ucfirst(str_replace('-', ' ', $autoVehicle->vehicle_type)).' '.$autoVehicle->plate_number)
+            : null;
+
         return Inertia::render('Dispatcher/Dashboard', [
             'incoming' => EmergencyReport::with(['incidentType:id,name,color', 'team:id,team_name'])->active()
-                ->orderByRaw("status = 'pending' desc")->latest('reported_at')->get()
+                ->orderByRaw("CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END")
+                ->orderByRaw("status = 'pending' desc")->latest('reported_at')->orderByDesc('id')->get()
                 ->map(fn (EmergencyReport $report): array => array_merge($report->toArray(), [
                     'photo_url' => $report->photo_path ? route('dispatcher.reports.photo', $report) : null,
                 ])),
             'counts' => EmergencyReport::selectRaw('status, count(*) c')->groupBy('status')->pluck('c', 'status'),
             'types' => IncidentType::orderBy('name')->get(['id', 'name', 'priority']),
-            'autoTeam' => $team ? ['id' => $team->id, 'name' => $team->team_name,
-                'members' => $this->dispatch->onShiftMembers($team)->map->only('id', 'name', 'role')->values()] : null,
+            'autoTeam' => $team ? [
+                'id' => $team->id,
+                'name' => $team->team_name,
+                'vehicle_name' => $autoVehicleLabel,
+                'members' => $this->dispatch->onShiftMembers($team)->map->only('id', 'name', 'role')->values(),
+            ] : null,
             'teams' => $teams,
         ]);
     }

@@ -38,8 +38,7 @@ class DispatchService
         }
 
         $now = now();
-        $hasUsableVehicle = fn ($q) => $q->whereDoesntHave('vehicles')
-            ->orWhereHas('vehicles', fn ($v) => $v->where('status', '!=', 'maintenance'));
+        $hasUsableVehicle = fn ($q) => $q->whereHas('vehicles', fn ($v) => $v->where('status', '!=', 'maintenance'));
 
         $onShift = ResponseTeam::where('status', 'active')
             ->where($hasUsableVehicle)
@@ -99,12 +98,38 @@ class DispatchService
                 ? ResponseTeam::query()->where('status', 'active')->lockForUpdate()->find($team->getKey())
                 : $this->autoAssignTeam(lockForUpdate: true);
             if (! $team) {
+                $hasActiveTeamWithDriver = ResponseTeam::query()
+                    ->where('status', 'active')
+                    ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active'))
+                        ->where(fn ($role) => $role->where('response_teams.member_roles_enabled', false)->orWhere('role', 'Driver')))
+                    ->exists();
+                $hasActiveTeamWithoutVehicle = ResponseTeam::query()
+                    ->where('status', 'active')
+                    ->whereHas('members', fn ($q) => $q->where('status', 'active')->whereHas('user', fn ($user) => $user->where('status', 'active'))
+                        ->where(fn ($role) => $role->where('response_teams.member_roles_enabled', false)->orWhere('role', 'Driver')))
+                    ->whereDoesntHave('vehicles')
+                    ->exists();
+
+                if ($hasActiveTeamWithoutVehicle) {
+                    throw ValidationException::withMessages([
+                        'team' => 'This response team needs an assigned vehicle first before it can be dispatched.',
+                    ]);
+                }
+
                 throw ValidationException::withMessages([
-                    'team' => 'No team has an active linked driver/responder. Edit a response team, select its members from the dropdowns, and ensure their accounts are active.',
+                    'team' => $hasActiveTeamWithDriver
+                        ? 'All vehicles assigned to active response teams are currently under maintenance.'
+                        : 'No team has an active linked driver/responder. Edit a response team, select its members from the dropdowns, and ensure their accounts are active.',
                 ]);
             }
 
-            if ($team->vehicles()->exists() && ! $team->vehicles()->where('status', '!=', 'maintenance')->exists()) {
+            if (! $team->vehicles()->exists()) {
+                throw ValidationException::withMessages([
+                    'team' => "{$team->team_name} needs an assigned vehicle first before it can be dispatched.",
+                ]);
+            }
+
+            if (! $team->vehicles()->where('status', '!=', 'maintenance')->exists()) {
                 throw ValidationException::withMessages([
                     'team' => 'All vehicles assigned to this team are currently under maintenance.',
                 ]);

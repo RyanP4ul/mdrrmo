@@ -39,4 +39,19 @@ return [
         'key' => env('GOOGLE_MAP_API_KEY'),
     ],
 
+    'sms_gateway' => [
+        'url' => rtrim((string) env('SMS_GATEWAY_URL', ''), '/'),
+        'admin_token' => env('SMS_GATEWAY_ADMIN_TOKEN'),
+        'device_id' => env('SMS_GATEWAY_DEVICE_ID'),
+        'otp_length' => (int) env('SMS_GATEWAY_OTP_LENGTH', 6),
+        'otp_ttl' => (int) env('SMS_GATEWAY_OTP_TTL', 300),
+        'resend_cooldown' => (int) env('SMS_GATEWAY_OTP_RESEND_COOLDOWN', 60),
+        'verification_token_ttl' => (int) env('SMS_GATEWAY_VERIFICATION_TOKEN_TTL', 900),
+        'timeout' => (int) env('SMS_GATEWAY_TIMEOUT', 15),
+        'message_template' => env(
+            'SMS_GATEWAY_OTP_TEMPLATE',
+            'Your MDRRMO verification code is {{code}}. Valid for 5 minutes.'
+        ),
+    ],
+
 ];

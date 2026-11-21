@@ -14,6 +14,7 @@ use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
 use App\Models\TeamMember;
 use App\Models\Vehicle;
+use App\Services\SmsGatewayService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -431,10 +432,12 @@ class MobileApiTest extends TestCase
         Storage::fake('r2');
         $admin = AdminUser::factory()->create();
         $idPhoto = UploadedFile::fake()->image('national_id.jpg', 800, 500);
+        $otpToken = app(SmsGatewayService::class)->issueVerificationToken('09171234567')['token'];
 
         $this->post('/api/auth/mobile/register', [
             'name' => 'Maria Santos',
             'contact' => '09171234567',
+            'otp_verification_token' => $otpToken,
             'address' => 'Balagtas, Bulacan',
             'email' => 'maria@example.test',
             'password' => 'SecurePassword123',
@@ -462,6 +465,9 @@ class MobileApiTest extends TestCase
     {
         if ($uri === '/api/auth/mobile/register') {
             $data += ['consent' => true, 'consent_version' => config('mobile.consent_version')];
+            if (! array_key_exists('otp_verification_token', $data) && ! empty($data['contact'])) {
+                $data['otp_verification_token'] = app(SmsGatewayService::class)->issueVerificationToken((string) $data['contact'])['token'];
+            }
         }
 
         return $this->postJson($uri, $data, ['Idempotency-Key' => (string) Str::uuid()]);

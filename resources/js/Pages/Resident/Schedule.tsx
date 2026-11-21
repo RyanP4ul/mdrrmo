@@ -19,7 +19,7 @@ import type { ServiceSchedule } from "@/types/website";
 export default function Schedule({ services, schedules }: { services: string[]; schedules: Paginated<ServiceSchedule> }) {
     usePoll(15000, { only: ["schedules"] });
     const [cancelId, setCancelId] = useState<number | null>(null);
-    const form = useForm({ service_type: "", preferred_date: "", preferred_time: "09:00", address: "", notes: "" });
+    const form = useForm({ service_type: "", service_details: "", preferred_date: "", preferred_time: "09:00", address: "", notes: "" });
     const e = form.errors as Record<string, string>;
     const submit = (event: FormEvent) => {
         event.preventDefault();
@@ -29,7 +29,7 @@ export default function Schedule({ services, schedules }: { services: string[]; 
     return (
         <AppLayout>
             <Head title="Book a Service" />
-            <PageHeader title="Book a service" description="Request ambulance standby, trainings and other MDRRMO services." />
+            <PageHeader title="Book a service" description="Request medical transport, discharge transport, or another MDRRMO service." />
             <div className="grid items-start gap-5 lg:grid-cols-[22rem_minmax(0,1fr)]">
                 <form onSubmit={submit} className="space-y-4 rounded-lg border bg-card p-5" aria-busy={form.processing}>
                     <h2 className="text-sm font-semibold">New request</h2>
@@ -39,6 +39,11 @@ export default function Schedule({ services, schedules }: { services: string[]; 
                             <SelectContent>{services.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                         </Select>
                     </Field>
+                    {form.data.service_type === "Others" && (
+                        <Field label="Requested service" htmlFor="service-details" required error={e.service_details}>
+                            <Input id="service-details" required maxLength={255} value={form.data.service_details} onChange={(ev) => form.setData("service_details", ev.target.value)} />
+                        </Field>
+                    )}
                     <div className="grid grid-cols-2 gap-3">
                         <Field label="Date" htmlFor="d" required error={e.preferred_date}>
                             <Input id="d" type="date" min={new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" })} value={form.data.preferred_date} onChange={(ev) => form.setData("preferred_date", ev.target.value)} />
@@ -65,7 +70,7 @@ export default function Schedule({ services, schedules }: { services: string[]; 
                             {schedules.data.map((s) => (
                                 <li key={s.id} className="space-y-1 p-4 text-sm">
                                     <div className="flex items-start justify-between gap-2">
-                                        <p className="font-medium">{s.service_type}</p>
+                                        <p className="font-medium">{s.service_details || s.service_type}</p>
                                         <StatusBadge value={s.status} />
                                     </div>
                                     <p className="text-muted-foreground tabular-nums">{s.preferred_date?.slice(0, 10)} · {s.preferred_time} · {s.address}</p>

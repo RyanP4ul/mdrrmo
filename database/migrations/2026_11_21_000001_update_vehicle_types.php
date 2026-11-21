@@ -11,6 +11,10 @@ return new class extends Migration
 
     public function up(): void
     {
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE vehicles DROP CONSTRAINT IF EXISTS vehicles_vehicle_type_check');
+        }
+
         Schema::table('vehicles', function (Blueprint $table): void {
             $table->string('vehicle_type', 40)->default('ambulance')->change();
         });

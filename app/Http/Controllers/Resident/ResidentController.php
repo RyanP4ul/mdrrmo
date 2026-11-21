@@ -18,8 +18,6 @@ use Inertia\Inertia;
 
 class ResidentController extends Controller
 {
-    public const SERVICES = ['Ambulance Standby', 'Medical Mission', 'Fire Safety Inspection', 'Disaster Drill', 'First Aid Training', 'Other'];
-
     public function dashboard(Request $request)
     {
         $u = $request->user();
@@ -42,17 +40,21 @@ class ResidentController extends Controller
         $d = $request->validate([
             'incident_type_id' => ['required', 'exists:incident_types,id'], 'reporter_type' => ['required', 'in:victim,witness'],
             'location' => ['required', 'string', 'max:255'], 'lat' => ['required', 'numeric', 'between:-90,90'], 'lng' => ['required', 'numeric', 'between:-180,180'],
-            'description' => ['required', 'string', 'max:2000'],
+            'description' => ['nullable', 'string', 'max:2000'],
         ]);
         $u = $request->user();
+        $d['description'] ??= '';
+        $reportedAt = now(config('mobile.timezone'));
 
-        $report = EmergencyReport::create($d + [
+        $report = DB::transaction(fn () => EmergencyReport::create($d + [
             'reference' => EmergencyReport::generateReference(),
             'status' => 'pending',
             'priority' => IncidentType::find($d['incident_type_id'])->priority, 'source' => 'mobile-app',
             'reported_by' => $u->getKey(), 'reported_by_type' => $u->getMorphClass(),
             'reporter_name' => $u->full_name, 'reporter_contact' => $u->contact_number,
-        ]);
+            'reported_at' => $reportedAt->copy()->utc(),
+            'victim_info' => $d['reporter_type'] === 'victim' ? $u->victimInformation($reportedAt) : null,
+        ]));
 
         EmergencyReportUpdated::dispatch($report, null, true);
 
@@ -101,7 +103,7 @@ class ResidentController extends Controller
     public function schedule(Request $request)
     {
         return Inertia::render('Resident/Schedule', [
-            'services' => self::SERVICES,
+            'services' => ServiceSchedule::REQUEST_TYPES,
             'schedules' => $request->user()->schedules()->latest()->paginate(6)->withQueryString(),
         ]);
     }
@@ -111,9 +113,8 @@ class ResidentController extends Controller
         abort_unless($request->user()->registration_status === 'accepted', 403, 'Your account is awaiting approval.');
 
         $d = $request->validate([
-            'service_type' => ['required', 'in:'.implode(',', self::SERVICES)],
+            ...ServiceScheduleWorkflow::bookingFields(),
             'preferred_date' => ['required', 'date_format:Y-m-d'], 'preferred_time' => ['required', 'date_format:H:i'],
-            'address' => ['required', 'string', 'max:255'], 'notes' => ['nullable', 'string', 'max:1000'],
         ]);
         if (Carbon::parse($d['preferred_date'].' '.$d['preferred_time'], config('mobile.timezone'))->isPast()) {
             throw ValidationException::withMessages(['preferred_time' => 'Choose a future date and time.']);

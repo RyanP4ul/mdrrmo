@@ -27,26 +27,107 @@ function DispatchMapRealtime({ onDriver, onStatus, refresh }: {
   return null;
 }
 
+interface TeamGroup {
+  key: string;
+  title: string;
+  assigned: boolean;
+  members: MapDriver[];
+}
+
+function groupDriversByTeam(drivers: MapDriver[]): TeamGroup[] {
+  const groups = new Map<string, TeamGroup>();
+  for (const driver of drivers) {
+    const teamLabel = driver.teamName?.trim() || '';
+    const key = driver.teamId != null ? `team-${driver.teamId}` : teamLabel ? `name-${teamLabel.toLowerCase()}` : 'unassigned';
+    const existing = groups.get(key);
+    if (existing) {
+      existing.members.push(driver);
+    } else {
+      groups.set(key, {
+        key,
+        title: teamLabel || 'Unassigned',
+        assigned: Boolean(teamLabel),
+        members: [driver],
+      });
+    }
+  }
+  const roleRank = (role?: string | null) => {
+    const lower = (role ?? '').toLowerCase();
+    if (lower === 'driver') return 0;
+    if (lower === 'responder') return 1;
+    return 2;
+  };
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      members: [...group.members].sort((a, b) => roleRank(a.memberRole) - roleRank(b.memberRole) || a.name.localeCompare(b.name)),
+    }))
+    .sort((a, b) => {
+      if (a.assigned !== b.assigned) return a.assigned ? -1 : 1;
+      return a.title.localeCompare(b.title);
+    });
+}
+
 function DriverList({ drivers, selectedId, onSelect, className }: {
   drivers: MapDriver[];
   selectedId: number | null;
   onSelect: (id: number) => void;
   className?: string;
 }) {
+  if (drivers.length === 0) {
+    return (
+      <div className={cn('px-4 py-8 text-center text-sm text-muted-foreground', className)}>
+        Waiting for driver/responder coordinates. Enable location and open the mobile app.
+      </div>
+    );
+  }
+  const teams = groupDriversByTeam(drivers);
   return (
-    <ul className={cn('divide-y overflow-y-auto', className)}>
-      {drivers.map((v) => (
-        <li key={v.id}>
-          <button type="button" onClick={() => onSelect(v.id)} aria-pressed={selectedId === v.id}
-            className={cn('block min-h-11 w-full px-4 py-3 text-left text-sm transition-colors hover:bg-muted/50', selectedId === v.id && 'bg-primary/5')}>
-            <span className="flex items-center justify-between gap-2"><span className="font-medium">{v.name}</span><StatusBadge value={v.status} /></span>
-            <span className="mt-1 block text-xs text-muted-foreground tabular-nums">{v.teamName ?? 'Driver / Responder'} · {v.speed} km/h · {ago(v.updatedAt)}</span>
-            {v.report && <span className="mt-1 block truncate text-xs">→ {v.report.reference}: {v.report.location}</span>}
-          </button>
-        </li>
+    <div className={cn('divide-y overflow-y-auto', className)}>
+      {teams.map((team) => (
+        <div key={team.key} className="bg-card">
+          <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-2">
+            <h3 className="truncate text-xs font-semibold uppercase tracking-wide text-foreground">
+              {team.title}
+            </h3>
+            <span className="shrink-0 text-[11px] font-medium text-muted-foreground tabular-nums">
+              {team.members.length} {team.members.length === 1 ? 'member' : 'members'}
+            </span>
+          </div>
+          <ul className="divide-y">
+            {team.members.map((v) => {
+              const roleLabel = v.memberRole?.trim() || 'Driver / Responder';
+              const isDriverRole = roleLabel.toLowerCase() === 'driver';
+              return (
+                <li key={v.id}>
+                  <button type="button" onClick={() => onSelect(v.id)} aria-pressed={selectedId === v.id}
+                    className={cn('block min-h-11 w-full px-4 py-2.5 text-left text-sm transition-colors hover:bg-muted/50', selectedId === v.id && 'bg-primary/5')}>
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate font-medium">{v.name}</span>
+                        <span
+                          className={cn(
+                            'shrink-0 rounded-sm border px-1.5 py-0.5 text-[10px] font-semibold',
+                            isDriverRole
+                              ? 'border-primary/25 bg-primary/10 text-primary'
+                              : 'border-border bg-muted text-muted-foreground',
+                          )}
+                        >
+                          {roleLabel}
+                        </span>
+                      </span>
+                      <StatusBadge value={v.status} />
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground tabular-nums">{v.speed} km/h · {ago(v.updatedAt)}</span>
+                    {v.report && <span className="mt-1 block truncate text-xs">→ {v.report.reference}: {v.report.location}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       ))}
-      {drivers.length === 0 && <li className="px-4 py-8 text-center text-sm text-muted-foreground">Waiting for driver/responder coordinates. Enable location and open the mobile app.</li>}
-    </ul>
+    </div>
   );
 }
 

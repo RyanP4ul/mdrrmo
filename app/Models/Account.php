@@ -2,7 +2,10 @@
 
 namespace App\Models;
 
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
+use RuntimeException;
 
 final class Account
 {
@@ -58,6 +61,37 @@ final class Account
         [$model, $id] = $parsed;
 
         return $model::withTrashed()->find($id);
+    }
+
+    /** Serialize account name checks and ID allocation within the current transaction. */
+    public static function lockIdSequence(): int
+    {
+        $sequence = DB::table('account_id_sequences')->where('id', 1)->lockForUpdate()->first();
+
+        if ($sequence === null) {
+            throw new RuntimeException('The account ID sequence has not been initialized.');
+        }
+
+        return (int) $sequence->next_id;
+    }
+
+    public static function lockForStatusChange(User $user): User
+    {
+        if ($user instanceof DriverResponderUser) {
+            ResponseTeam::query()->whereIn('id', $user->activeMemberships()->reorder()->select('response_team_id'))
+                ->orderBy('id')->lockForUpdate()->get(['id']);
+        }
+
+        return $user->newQuery()->whereKey($user->getKey())->lockForUpdate()->firstOrFail();
+    }
+
+    public static function ensureStatusChangeAllowed(User $user, string $status): void
+    {
+        if ($status !== 'active' && $status !== $user->status && $user instanceof DriverResponderUser && $user->hasActiveEmergencyDispatch()) {
+            throw ValidationException::withMessages([
+                'status' => 'Cannot deactivate this user because they are currently dispatched to an emergency.',
+            ]);
+        }
     }
 
     /**

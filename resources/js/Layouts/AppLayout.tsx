@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { AdminNotificationBell } from '@/components/AdminNotificationBell';
 import {
   Activity, AlertTriangle, Archive, Bell, CalendarDays, ChevronDown, ClipboardList, FileText, History, LayoutDashboard,
   LogOut, Map as MapIcon, Menu, Navigation, Radio, Shield, Siren, Truck, Users, type LucideIcon,
@@ -31,6 +32,7 @@ const NAV: Record<Role, Group[]> = {
     { label: 'Management', items: [
       { label: 'Users', href: '/admin/users', icon: Users },
       { label: 'Response Teams', href: '/admin/response-teams', icon: Shield },
+      { label: 'Vehicle Management', href: '/admin/vehicles', icon: Truck },
       { label: 'Incident Types', href: '/admin/incident-types', icon: AlertTriangle },
       { label: 'Archives', href: '/admin/archives', icon: Archive },
     ] },
@@ -43,7 +45,6 @@ const NAV: Record<Role, Group[]> = {
     ] },
     { label: 'Coordination', items: [
       { label: 'Responders', href: '/dispatcher/responders', icon: Shield },
-      { label: 'Vehicle Management', href: '/dispatcher/vehicles', icon: Truck },
       { label: 'Schedule', href: '/dispatcher/schedule', icon: CalendarDays },
     ] },
   ],
@@ -190,6 +191,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </div>
 
             <ThemeToggle />
+            {auth.user.role === 'admin' && <AdminNotificationBell />}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

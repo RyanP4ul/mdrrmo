@@ -10,12 +10,12 @@ use App\Models\IncidentType;
 use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
 use App\Models\TeamMember;
+use App\Models\Vehicle;
 use App\Services\DispatchService;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
-use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -52,7 +52,7 @@ class TeamRolesTest extends TestCase
         return '/api/driver-responder/teams/'.$team->id.'/role';
     }
 
-    public function test_only_one_member_can_claim_driver_and_releasing_it_allows_the_next_member(): void
+    public function test_both_directions_swap_the_pair_atomically_and_retries_are_idempotent(): void
     {
         Event::fake([TeamRoleUpdated::class]);
         [$team, $first, $second] = $this->team();
@@ -60,17 +60,17 @@ class TeamRolesTest extends TestCase
         $this->patchJson($this->role($team), ['role' => 'Driver'])->assertOk()
             ->assertJsonPath('team_roles.0.role', 'Driver');
         Sanctum::actingAs($second->user, ['driver-read', 'driver-write']);
-        $this->patchJson($this->role($team), ['role' => 'Driver'])->assertConflict();
         $this->getJson('/api/driver-responder/bootstrap')->assertOk()
-            ->assertJsonPath('team_roles.0.can_be_driver', false)->assertJsonPath('team_roles.0.driver_name', $first->name)
+            ->assertJsonPath('team_roles.0.can_be_driver', true)->assertJsonPath('team_roles.0.can_swap_roles', true)
             ->assertJsonPath('can_dispatch', false);
-        $this->assertSame('Responder', $second->fresh()->role);
-        Sanctum::actingAs($first->user, ['driver-write']);
-        $this->patchJson($this->role($team), ['role' => 'Responder'])->assertOk();
-        Sanctum::actingAs($second->user, ['driver-write']);
         $this->patchJson($this->role($team), ['role' => 'Driver'])->assertOk();
-        $this->assertSame(1, $team->members()->where('role', 'Driver')->count());
         $this->assertSame('Driver', $second->fresh()->role);
+        $this->assertSame('Responder', $first->fresh()->role);
+        $this->patchJson($this->role($team), ['role' => 'Responder'])->assertOk();
+        $this->patchJson($this->role($team), ['role' => 'Responder'])->assertOk();
+        $this->assertSame('Driver', $first->fresh()->role);
+        $this->assertSame('Responder', $second->fresh()->role);
+        $this->assertSame(1, $team->members()->where('role', 'Driver')->count());
         Event::assertDispatchedTimes(TeamRoleUpdated::class, 3);
     }
 
@@ -99,6 +99,23 @@ class TeamRolesTest extends TestCase
             $this->patchJson($this->role($team), ['role' => 'Driver'])->assertOk();
         }
         $this->assertSame(2, TeamMember::where('role', 'Driver')->count());
+    }
+
+    public function test_existing_idle_pairs_are_repaired_while_active_dispatch_roles_are_preserved(): void
+    {
+        [$idle, $first, $second] = $this->team();
+        [$busy, $busyFirst, $busySecond] = $this->team();
+        $this->report($busy, $busyFirst->user_id);
+
+        $migration = require database_path('migrations/2026_11_21_114626_normalize_existing_response_team_pairs.php');
+        $migration->up();
+        $migration->up();
+
+        $this->assertSame('Driver', $first->fresh()->role);
+        $this->assertSame('Responder', $second->fresh()->role);
+        $this->assertTrue($idle->fresh()->member_roles_enabled);
+        $this->assertSame('Responder', $busyFirst->fresh()->role);
+        $this->assertSame('Responder', $busySecond->fresh()->role);
     }
 
     public function test_database_constraint_blocks_a_second_driver_even_if_a_writer_bypasses_the_api(): void
@@ -164,9 +181,10 @@ class TeamRolesTest extends TestCase
         $this->patchJson('/api/driver-responder/assignments/'.$report->id.'/status', ['response_status' => 'on-scene'])->assertForbidden();
     }
 
-    public function test_dispatch_selects_the_current_driver_and_stops_when_the_role_is_released(): void
+    public function test_dispatch_selects_the_new_driver_after_the_pair_swaps(): void
     {
         [$team, $responder, $driver] = $this->team();
+        Vehicle::create(['response_team_id' => $team->id, 'plate_number' => 'AMB-SWAP1', 'vehicle_type' => 'ambulance', 'status' => 'available']);
         $driver->update(['role' => 'Driver']);
         $report = $this->report($team);
         $service = app(DispatchService::class);
@@ -175,10 +193,9 @@ class TeamRolesTest extends TestCase
         $report->update(['status' => 'resolved']);
         Sanctum::actingAs($driver->user, ['driver-write']);
         $this->patchJson($this->role($team), ['role' => 'Responder'])->assertOk();
-        $this->assertNull($service->autoAssignTeam());
         $pending = $this->report($team);
-        $this->expectException(ValidationException::class);
         $service->dispatch($pending, $team);
+        $this->assertSame($responder->user_id, $pending->fresh()->assigned_driver_id);
     }
 
     public function test_migration_preserves_the_assigned_driver_and_removes_legacy_duplicate_driver_roles(): void

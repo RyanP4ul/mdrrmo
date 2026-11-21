@@ -7,10 +7,12 @@ use App\Http\Requests\GenerateEmergencyOperationsReportRequest;
 use App\Http\Requests\UpdateEmergencyReportRequest;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
+use App\Models\ServiceSchedule;
 use App\Services\ArchiveService;
 use App\Services\EmergencyOperationsReportService;
 use App\Services\EmergencyReportWorkflow;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,17 +30,54 @@ class EmergencyReportController extends Controller
     {
         Gate::authorize('viewAny', EmergencyReport::class);
         $filters = $request->only('search', 'status', 'priority', 'type', 'tab');
+        $tab = $filters['tab'] ?? 'emergency';
         $timezone = (string) config('reporting.timezone', 'Asia/Manila');
         $nowManila = CarbonImmutable::now($timezone);
+
+        $scheduledReports = $tab === 'scheduled'
+            ? ServiceSchedule::query()
+                ->with(['resident:id,first_name,last_name,contact_number', 'team:id,team_name', 'driverTicket.driver:id,first_name,last_name'])
+                ->when($filters['search'] ?? null, fn ($q, $s) => $q->where(fn ($query) => $query
+                    ->where('service_type', 'like', "%{$s}%")
+                    ->orWhere('service_details', 'like', "%{$s}%")
+                    ->orWhere('address', 'like', "%{$s}%")
+                    ->orWhere('destination_address', 'like', "%{$s}%")
+                    ->orWhereHas('resident', fn ($r) => $r->where('first_name', 'like', "%{$s}%")->orWhere('last_name', 'like', "%{$s}%"))))
+                ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
+                ->orderByDesc('preferred_date')
+                ->orderByDesc('preferred_time')
+                ->paginate(8)
+                ->withQueryString()
+                ->through(fn (ServiceSchedule $s): array => [
+                    'id' => $s->id,
+                    'reference' => 'SCH-'.str_pad((string) $s->id, 5, '0', STR_PAD_LEFT),
+                    'service_type' => $s->service_type,
+                    'service_details' => $s->service_details,
+                    'preferred_date' => $s->preferred_date?->toDateString(),
+                    'preferred_time' => Carbon::parse($s->preferred_time)->format('H:i'),
+                    'address' => $s->address,
+                    'destination_address' => $s->destination_address,
+                    'status' => $s->status,
+                    'resident' => $s->resident?->full_name,
+                    'contact' => $s->resident?->contact_number,
+                    'team_name' => $s->team?->team_name,
+                    'has_driver_ticket' => $s->driverTicket !== null,
+                    'driver_ticket' => $s->driverTicket ? [
+                        'driver_name' => $s->driverTicket->driver?->full_name,
+                        'driver_section' => $s->driverTicket->driver_section ?? [],
+                    ] : null,
+                ])
+            : null;
 
         return Inertia::render('Admin/Reports/Index', [
             'filters' => $filters,
             'types' => IncidentType::orderBy('name')->get(['id', 'name']),
             'reports' => EmergencyReport::with(['incidentType:id,name,color', 'form', 'driver:id,first_name,last_name'])
-                ->when(($filters['tab'] ?? '') === 'driver', fn ($query) => $query->withDriverForm())
+                ->when($tab === 'driver', fn ($query) => $query->withDriverForm())
                 ->filter($filters)
                 ->latest('reported_at')
                 ->paginate(8)->withQueryString(),
+            'scheduledReports' => $scheduledReports,
             'operationsDefaults' => [
                 'timezone' => $timezone,
                 'today_date' => $nowManila->toDateString(),

@@ -45,9 +45,8 @@ export default function Team({
 
   const maintenanceForm = useForm({
     vehicle_id: defaultVehicleId ? String(defaultVehicleId) : '',
-    issue_type: issueTypes[0] ?? 'Engine / Mechanical',
-    severity: 'medium' as 'low' | 'medium' | 'high' | 'critical',
-    mileage: '',
+    issue_type: issueTypes[0] ?? 'Brakes / Tires',
+    issue_details: '',
     description: '',
     recommend_out_of_service: false,
   });
@@ -74,7 +73,7 @@ export default function Team({
     maintenanceForm.post(route('driver.maintenance-reports.store'), {
       preserveScroll: true,
       onSuccess: () => {
-        maintenanceForm.reset('mileage', 'description', 'recommend_out_of_service');
+        maintenanceForm.reset('issue_details', 'description', 'recommend_out_of_service');
       },
     });
   };
@@ -289,56 +288,37 @@ export default function Team({
                   </Select>
                 </Field>
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Issue category *" htmlFor="m-issue" error={errors.issue_type}>
-                    <Select
-                      value={maintenanceForm.data.issue_type}
-                      onValueChange={(v) => maintenanceForm.setData('issue_type', v)}
-                    >
-                      <SelectTrigger id="m-issue" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {issueTypes.map((type) => (
-                          <SelectItem key={type} value={type}>
-                            {type}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-
-                  <Field label="Severity *" htmlFor="m-severity" error={errors.severity}>
-                    <Select
-                      value={maintenanceForm.data.severity}
-                      onValueChange={(v) =>
-                        maintenanceForm.setData('severity', v as 'low' | 'medium' | 'high' | 'critical')
-                      }
-                    >
-                      <SelectTrigger id="m-severity" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(['low', 'medium', 'high', 'critical'] as const).map((s) => (
-                          <SelectItem key={s} value={s} className="capitalize">
-                            {s}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                </div>
-
-                <Field label="Current odometer / mileage (km)" htmlFor="m-mileage" error={errors.mileage}>
-                  <Input
-                    id="m-mileage"
-                    type="number"
-                    min={0}
-                    placeholder="e.g. 48250"
-                    value={maintenanceForm.data.mileage}
-                    onChange={(e) => maintenanceForm.setData('mileage', e.target.value)}
-                  />
+                <Field label="Issue category *" htmlFor="m-issue" error={errors.issue_type}>
+                  <Select
+                    value={maintenanceForm.data.issue_type}
+                    onValueChange={(v) => {
+                      maintenanceForm.setData('issue_type', v);
+                      if (v !== 'Others') maintenanceForm.setData('issue_details', '');
+                    }}
+                  >
+                    <SelectTrigger id="m-issue" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {issueTypes.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {type}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
+
+                {maintenanceForm.data.issue_type === 'Others' && (
+                  <Field label="Specify issue *" htmlFor="m-issue-details" error={errors.issue_details}>
+                    <Input
+                      id="m-issue-details"
+                      placeholder="Enter the specific maintenance issue"
+                      value={maintenanceForm.data.issue_details}
+                      onChange={(e) => maintenanceForm.setData('issue_details', e.target.value)}
+                    />
+                  </Field>
+                )}
 
                 <Field label="Issue description *" htmlFor="m-desc" error={errors.description}>
                   <Textarea
@@ -388,10 +368,9 @@ export default function Team({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-xs font-semibold">{r.plate_number}</span>
-                        <span className="font-medium">{r.issue_type}</span>
+                        <span className="font-medium">{r.issue_label || r.issue_type}</span>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <StatusBadge value={r.severity} />
                         <StatusBadge value={r.status} />
                       </div>
                     </div>

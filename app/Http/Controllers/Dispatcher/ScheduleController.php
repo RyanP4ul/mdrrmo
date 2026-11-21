@@ -28,12 +28,12 @@ class ScheduleController extends Controller
                 ->whereHas('members', fn ($query) => $query->where('status', 'active')->whereNotNull('user_id')
                     ->whereHas('user', fn ($user) => $user->where('status', 'active')))
                 ->orderBy('team_name')->get(['id', 'team_name']),
-            'schedules' => ServiceSchedule::with('resident:id,first_name,last_name,contact_number', 'team:id,team_name')->withCount('responders')
+            'schedules' => ServiceSchedule::with(['resident:id,first_name,last_name,contact_number', 'team:id,team_name', 'driverTicket'])->withCount('responders')
                 ->whereBetween('preferred_date', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])
                 ->when($f['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
                 ->orderBy('preferred_date')->orderBy('preferred_time')->get()
-                ->map(fn ($s) => $s->only('id', 'service_type', 'preferred_time', 'address', 'notes', 'status', 'decline_reason') + [
-                    'team_name' => $s->team?->team_name, 'needs_assignment' => $s->responders_count === 0, 'date' => $s->preferred_date->toDateString(), 'resident' => $s->resident->full_name, 'contact' => $s->resident->contact_number]),
+                ->map(fn ($s) => $s->only('id', 'service_type', 'service_details', 'preferred_time', 'address', 'destination_address', 'notes', 'status', 'decline_reason') + [
+                    'team_name' => $s->team?->team_name, 'needs_assignment' => $s->responders_count === 0, 'date' => $s->preferred_date->toDateString(), 'resident' => $s->resident->full_name, 'contact' => $s->resident->contact_number, 'has_driver_ticket' => $s->driverTicket !== null]),
         ]);
     }
 

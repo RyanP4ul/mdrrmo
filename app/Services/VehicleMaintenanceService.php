@@ -23,13 +23,21 @@ class VehicleMaintenanceService
             $vehicle = Vehicle::query()->with('team')->lockForUpdate()->findOrFail($data['vehicle_id']);
             Gate::forUser($driver)->authorize('reportMaintenance', $vehicle);
 
+            $issueType = $data['issue_type'];
+            $issueDetails = $issueType === 'Others' && filled($data['issue_details'] ?? null)
+                ? trim((string) $data['issue_details'])
+                : null;
+            $severity = $data['severity'] ?? 'medium';
+            $issueLabel = $issueDetails !== null ? "{$issueType}: {$issueDetails}" : $issueType;
+
             $report = MaintenanceReport::query()->create([
                 'reference' => 'MNT-'.now()->format('Y').'-'.Str::upper(Str::random(8)),
                 'vehicle_id' => $vehicle->id,
                 'response_team_id' => $vehicle->response_team_id,
                 'reported_by' => $driver->id,
-                'issue_type' => $data['issue_type'],
-                'severity' => $data['severity'],
+                'issue_type' => $issueType,
+                'issue_details' => $issueDetails,
+                'severity' => $severity,
                 'mileage' => $data['mileage'] ?? null,
                 'description' => $data['description'],
                 'recommend_out_of_service' => (bool) ($data['recommend_out_of_service'] ?? false),
@@ -38,7 +46,7 @@ class VehicleMaintenanceService
 
             if (! $vehicle->maintenance_warning && ($report->recommend_out_of_service || in_array($report->severity, ['high', 'critical'], true))) {
                 $vehicle->update([
-                    'maintenance_warning' => "Pending {$report->severity} maintenance report ({$report->issue_type}): {$report->description}",
+                    'maintenance_warning' => "Pending maintenance report ({$issueLabel}): {$report->description}",
                 ]);
             }
 
@@ -158,6 +166,10 @@ class VehicleMaintenanceService
             'reported_by' => $report->reported_by,
             'reporter_name' => $report->reporter?->full_name,
             'issue_type' => $report->issue_type,
+            'issue_details' => $report->issue_details,
+            'issue_label' => $report->issue_type === 'Others' && filled($report->issue_details)
+                ? "{$report->issue_type}: {$report->issue_details}"
+                : $report->issue_type,
             'severity' => $report->severity,
             'mileage' => $report->mileage,
             'description' => $report->description,

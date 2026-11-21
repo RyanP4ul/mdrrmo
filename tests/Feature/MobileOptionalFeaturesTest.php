@@ -112,7 +112,6 @@ class MobileOptionalFeaturesTest extends TestCase
     {
         [$driver, $team, $member] = $this->fleet();
         $member->update(['role' => 'Responder']);
-        Vehicle::query()->delete();
         $report = $this->report(ResidentUser::factory()->accepted()->create());
         $this->assertSame(0, app(AutomaticDispatch::class)->drain());
         Sanctum::actingAs(AdminUser::factory()->create(['password' => 'admin-password']), ['*']);

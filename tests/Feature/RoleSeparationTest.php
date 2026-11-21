@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\TestWith;
 use Tests\TestCase;
 
 class RoleSeparationTest extends TestCase
@@ -240,6 +241,106 @@ class RoleSeparationTest extends TestCase
             ->assertSessionHasErrors('email');
 
         $this->assertDatabaseMissing('residents', ['email' => 'duplicate@example.test']);
+    }
+
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_admin_user_management_rejects_a_duplicate_name_pair_across_roles(bool $archived): void
+    {
+        $admin = AdminUser::factory()->create();
+        $resident = ResidentUser::factory()->create(['first_name' => 'Maria', 'last_name' => 'Santos']);
+        if ($archived) {
+            $resident->archiveBy($admin);
+        }
+
+        $this->actingAs($admin)->post(route('admin.users.store'), [
+            'first_name' => ' MARIA ',
+            'last_name' => 'santos',
+            'email' => 'name.duplicate@example.test',
+            'password' => 'ValidPass123',
+            'contact_number' => '555-0102',
+            'role' => 'dispatcher',
+            'status' => 'active',
+        ])->assertSessionHasErrors(['first_name' => 'An account with this first and last name already exists.']);
+
+        $this->assertDatabaseMissing('dispatchers', ['email' => 'name.duplicate@example.test']);
+    }
+
+    #[TestWith(['Maria', 'Reyes'])]
+    #[TestWith(['Ana', 'Santos'])]
+    public function test_admin_user_management_allows_a_shared_first_or_last_name(string $firstName, string $lastName): void
+    {
+        $admin = AdminUser::factory()->create();
+        ResidentUser::factory()->create(['first_name' => 'Maria', 'last_name' => 'Santos']);
+
+        $this->actingAs($admin)->post(route('admin.users.store'), [
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'email' => 'name.shared@example.test',
+            'password' => 'ValidPass123',
+            'contact_number' => '555-0102',
+            'role' => 'dispatcher',
+            'status' => 'active',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('dispatchers', [
+            'email' => 'name.shared@example.test', 'first_name' => $firstName, 'last_name' => $lastName,
+        ]);
+    }
+
+    public function test_admin_user_management_rejects_renaming_an_account_to_an_existing_name_pair(): void
+    {
+        $admin = AdminUser::factory()->create();
+        $dispatcher = DispatcherUser::factory()->create(['first_name' => 'Ana', 'last_name' => 'Reyes']);
+        DispatcherUser::factory()->create(['first_name' => 'Maria', 'last_name' => 'Santos']);
+
+        $this->actingAs($admin)->put(route('admin.users.update', Account::keyFor($dispatcher)), [
+            'first_name' => 'Maria',
+            'last_name' => 'Santos',
+            'email' => $dispatcher->email,
+            'contact_number' => '555-0102',
+            'role' => 'dispatcher',
+            'status' => 'active',
+        ])->assertSessionHasErrors(['first_name' => 'An account with this first and last name already exists.']);
+
+        $this->assertDatabaseHas('dispatchers', [
+            'id' => $dispatcher->id, 'first_name' => 'Ana', 'last_name' => 'Reyes',
+        ]);
+    }
+
+    public function test_admin_user_management_allows_an_unrelated_edit_to_a_legacy_duplicate(): void
+    {
+        $admin = AdminUser::factory()->create();
+        $dispatcher = DispatcherUser::factory()->create(['first_name' => 'Maria', 'last_name' => 'Santos']);
+        ResidentUser::factory()->create(['first_name' => 'Maria', 'last_name' => 'Santos']);
+
+        $this->actingAs($admin)->put(route('admin.users.update', Account::keyFor($dispatcher)), [
+            'first_name' => 'Maria',
+            'last_name' => 'Santos',
+            'email' => $dispatcher->email,
+            'contact_number' => '555-0102',
+            'role' => 'dispatcher',
+            'status' => 'active',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('dispatchers', ['id' => $dispatcher->id, 'contact_number' => '555-0102']);
+    }
+
+    public function test_admin_user_management_allows_a_capitalization_change_to_the_same_account(): void
+    {
+        $admin = AdminUser::factory()->create();
+        $dispatcher = DispatcherUser::factory()->create(['first_name' => 'Maria', 'last_name' => 'Santos']);
+
+        $this->actingAs($admin)->put(route('admin.users.update', Account::keyFor($dispatcher)), [
+            'first_name' => 'MARIA',
+            'last_name' => 'Santos',
+            'email' => $dispatcher->email,
+            'contact_number' => '555-0102',
+            'role' => 'dispatcher',
+            'status' => 'active',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame('MARIA', $dispatcher->refresh()->first_name);
     }
 
     public function test_account_role_cannot_be_changed_after_creation(): void

@@ -11,6 +11,10 @@ Broadcast::channel('dispatch', function (User $user): bool {
     return $user->status === 'active' && $user->hasRole('dispatcher');
 });
 
+Broadcast::channel('admin.notifications', function (User $user): bool {
+    return $user->status === 'active' && $user->hasRole('admin');
+});
+
 Broadcast::channel('drivers.{id}', function (User $user, string $id): bool {
     return $user->status === 'active' && $user->hasRole('driver/responder') && (string) $user->id === $id;
 }, ['guards' => ['sanctum']]);

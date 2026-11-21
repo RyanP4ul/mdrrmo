@@ -8,6 +8,7 @@ use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
 use App\Models\ResponseTeam;
+use App\Models\Vehicle;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -17,12 +18,43 @@ class DispatcherOperationsTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_incoming_reports_use_priority_order_across_statuses_and_after_updates(): void
+    {
+        $dispatcher = DispatcherUser::factory()->create();
+        $type = IncidentType::create(['name' => 'Fire', 'description' => 'Fire incident', 'priority' => 'critical']);
+        $reportedAt = now();
+        $create = fn (string $priority, string $status, $time) => EmergencyReport::create([
+            'reference' => EmergencyReport::generateReference(), 'incident_type_id' => $type->id,
+            'location' => 'Town hall', 'description' => 'Incident', 'lat' => 14.8, 'lng' => 120.9,
+            'reporter_name' => 'Reporter', 'status' => $status, 'priority' => $priority, 'reported_at' => $time,
+        ]);
+
+        $low = $create('low', 'pending', $reportedAt);
+        $medium = $create('medium', 'acknowledged', $reportedAt);
+        $high = $create('high', 'pending', $reportedAt);
+        $highTie = $create('high', 'pending', $reportedAt);
+        $critical = $create('critical', 'dispatched', $reportedAt->copy()->subHour());
+        $create('critical', 'resolved', $reportedAt);
+
+        $firstLoad = $this->actingAs($dispatcher)->get(route('dispatcher.dashboard'));
+        $firstLoad->assertInertia(fn (Assert $page) => $page->where('incoming', fn ($reports) =>
+            $reports->pluck('id')->all() === [$critical->id, $highTie->id, $high->id, $medium->id, $low->id]));
+
+        $low->update(['priority' => 'critical']);
+
+        $this->get(route('dispatcher.dashboard'), [
+            'X-Inertia' => 'true', 'X-Inertia-Version' => $firstLoad->viewData('page')['version'],
+            'X-Inertia-Partial-Component' => 'Dispatcher/Dashboard', 'X-Inertia-Partial-Data' => 'incoming',
+        ])->assertOk()->assertJsonPath('props.incoming.0.id', $low->id);
+    }
+
     public function test_dispatching_an_incoming_report_keeps_its_details_read_only(): void
     {
         Event::fake([EmergencyReportUpdated::class]);
         $dispatcher = DispatcherUser::factory()->create();
         $driver = DriverResponderUser::factory()->create();
         $team = ResponseTeam::create(['team_name' => 'Alpha Team', 'status' => 'active']);
+        Vehicle::create(['response_team_id' => $team->id, 'plate_number' => 'AMB-ALPHA1', 'vehicle_type' => 'ambulance', 'status' => 'available']);
         $team->members()->create([
             'user_id' => $driver->id,
             'name' => $driver->full_name,
@@ -125,6 +157,7 @@ class DispatcherOperationsTest extends TestCase
         $dispatcher = DispatcherUser::factory()->create();
         $driver = DriverResponderUser::factory()->create();
         $team = ResponseTeam::create(['team_name' => 'Bravo Team', 'status' => 'active']);
+        Vehicle::create(['response_team_id' => $team->id, 'plate_number' => 'AMB-BRAVO1', 'vehicle_type' => 'ambulance', 'status' => 'available']);
         $team->members()->create([
             'user_id' => $driver->id,
             'name' => $driver->full_name,
@@ -193,5 +226,58 @@ class DispatcherOperationsTest extends TestCase
                 ->where('incoming.0.victim_info.name', 'Ana Reyes')
                 ->where('incoming.0.victim_info.age', '34')
                 ->where('incoming.0.victim_info.sex', 'Female'));
+    }
+
+    public function test_dispatching_a_team_without_an_assigned_vehicle_fails_with_clear_message(): void
+    {
+        $dispatcher = DispatcherUser::factory()->create();
+        $driver = DriverResponderUser::factory()->create();
+        $team = ResponseTeam::create(['team_name' => 'No-Vehicle Team', 'status' => 'active']);
+        $team->members()->create([
+            'user_id' => $driver->id,
+            'name' => $driver->full_name,
+            'role' => 'Driver',
+            'status' => 'active',
+        ]);
+        $type = IncidentType::create([
+            'name' => 'Medical Emergency',
+            'description' => 'Medical emergency',
+            'priority' => 'high',
+        ]);
+        $report = EmergencyReport::create([
+            'reference' => 'RPT-2026-NOVEH1',
+            'incident_type_id' => $type->id,
+            'location' => 'Barangay San Juan',
+            'lat' => 14.8153,
+            'lng' => 120.9094,
+            'description' => 'Needs ambulance.',
+            'status' => 'pending',
+            'priority' => 'high',
+            'source' => 'mobile-app',
+            'reporter_type' => 'victim',
+            'reporter_name' => 'Maria Santos',
+            'reported_at' => now(),
+        ]);
+
+        // Manual team selection without vehicle throws team validation message.
+        $this->actingAs($dispatcher)
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $report->id,
+                'team_id' => $team->id,
+            ])
+            ->assertSessionHasErrors([
+                'team' => 'No-Vehicle Team needs an assigned vehicle first before it can be dispatched.',
+            ]);
+        $this->assertSame('pending', $report->fresh()->status);
+
+        // Auto-assign when active team has no vehicle also throws clear message.
+        $this->actingAs($dispatcher)
+            ->post(route('dispatcher.dispatch.store'), [
+                'report_id' => $report->id,
+            ])
+            ->assertSessionHasErrors([
+                'team' => 'This response team needs an assigned vehicle first before it can be dispatched.',
+            ]);
+        $this->assertSame('pending', $report->fresh()->status);
     }
 }

@@ -1,6 +1,6 @@
 import { Head, Link, router } from '@inertiajs/react';
 import { route } from 'ziggy-js';
-import { Archive, ChevronDown, ChevronUp, Eye, FileDown, FileText, Truck } from 'lucide-react';
+import { Archive, CalendarDays, ChevronDown, ChevronUp, Eye, FileDown, FileText, Truck } from 'lucide-react';
 import { useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -28,37 +28,67 @@ export interface ReportRow {
   driver?: { first_name: string; last_name: string } | null;
   form?: ReportForm | null;
 }
+
+interface ScheduledReportRow {
+  id: number;
+  reference: string;
+  service_type: string;
+  service_details?: string | null;
+  preferred_date: string | null;
+  preferred_time: string;
+  address: string;
+  destination_address?: string | null;
+  status: string;
+  resident?: string | null;
+  contact?: string | null;
+  team_name?: string | null;
+  has_driver_ticket: boolean;
+  driver_ticket?: {
+    driver_name?: string | null;
+    driver_section: ReportForm['driver_section'];
+  } | null;
+}
+
 const opts = (a: string[]) => a.map((v) => ({ value: v, label: v }));
 
 export default function Index({
   reports,
+  scheduledReports,
   types,
   filters,
   operationsDefaults,
 }: {
   reports: Paginated<ReportRow>;
+  scheduledReports?: Paginated<ScheduledReportRow> | null;
   types: { id: number; name: string }[];
   filters: Record<string, string>;
   operationsDefaults?: OperationsDefaults;
 }) {
-  const { values, set, reset } = useServerFilters({ search: filters.search ?? '', status: filters.status ?? '', type: filters.type ?? '', priority: filters.priority ?? '', tab: filters.tab === 'driver' ? 'driver' : 'emergency' }, ['reports']);
-  const tab = filters.tab === 'driver' ? 'driver' : 'emergency';
+  const activeTab = filters.tab === 'scheduled' ? 'scheduled' : filters.tab === 'driver' ? 'driver' : 'emergency';
+  const { values, set, reset } = useServerFilters(
+    { search: filters.search ?? '', status: filters.status ?? '', type: filters.type ?? '', priority: filters.priority ?? '', tab: activeTab },
+    ['reports', 'scheduledReports'],
+  );
+  const tab = activeTab;
   const clearFilters = () => { reset(); set('tab', tab); };
   const [showOperationsPdf, setShowOperationsPdf] = useState<boolean>(true);
   const [archiving, setArchiving] = useState<ReportRow | null>(null);
   const pick = (k: string) => (v: string) => set(k as 'status', v === 'all' ? '' : v);
   const isFiltered = Object.entries(values).some(([key, value]) => key !== 'tab' && Boolean(value));
   const driverFormRows = reports.data;
+  const scheduledRows = scheduledReports?.data ?? [];
 
   return (
     <AppLayout>
-      <Head title="Emergency Reports & Driver Forms" />
+      <Head title="Emergency Reports & Scheduled Services" />
       <PageHeader
-        title={tab === 'emergency' ? 'Emergency Reports' : 'Driver Forms'}
+        title={tab === 'scheduled' ? 'Scheduled Service Reports' : tab === 'driver' ? 'Driver Forms' : 'Emergency Reports'}
         description={
-          tab === 'emergency'
-            ? 'Monitor and audit all incident reports, plus Weekly and Monthly Emergency Operations PDF reports.'
-            : 'Review submitted Driver Authorization and Fuel Forms separately from Emergency Reports.'
+          tab === 'scheduled'
+            ? 'Review scheduled services and inspect the Driver Ticket submitted for each service.'
+            : tab === 'driver'
+              ? 'Review submitted Driver Authorization and Fuel Forms separately from Emergency Reports.'
+              : 'Monitor and audit all incident reports, plus Weekly and Monthly Emergency Operations PDF reports.'
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -75,11 +105,11 @@ export default function Index({
               <Button
                 type="button"
                 size="sm"
-                variant={tab === 'driver' ? 'default' : 'ghost'}
-                onClick={() => set('tab', 'driver')}
+                variant={tab === 'scheduled' ? 'default' : 'ghost'}
+                onClick={() => set('tab', 'scheduled')}
               >
-                <Truck className="mr-1.5 size-3.5" />
-                Driver Forms
+                <CalendarDays className="mr-1.5 size-3.5" />
+                Scheduled Services
               </Button>
             </div>
             <Button
@@ -105,16 +135,84 @@ export default function Index({
           <OperationsPdfReportPanel defaults={operationsDefaults} />
         </div>
       )}
-      <FilterBar search={values.search} onSearch={(v) => set('search', v)} placeholder="Search ID, type or location…">
-        <FilterSelect label="Status" value={values.status} onChange={pick('status')} options={opts(['pending', 'acknowledged', 'dispatched', 'resolved', 'invalid'])} />
-        <FilterSelect label="Types" value={values.type} onChange={pick('type')} options={types.map((t) => ({ value: String(t.id), label: t.name }))} />
-        <FilterSelect label="Priority" value={values.priority} onChange={pick('priority')} options={opts(['low', 'medium', 'high', 'critical'])} />
+      <FilterBar search={values.search} onSearch={(v) => set('search', v)} placeholder={tab === 'scheduled' ? 'Search service, requester, or address…' : 'Search ID, type or location…'}>
+        {tab === 'scheduled' ? (
+          <FilterSelect
+            label="Status"
+            value={values.status}
+            onChange={pick('status')}
+            options={opts(['pending', 'acknowledged', 'confirmed', 'en-route', 'on-scene', 'completed', 'declined', 'cancelled'])}
+          />
+        ) : (
+          <>
+            <FilterSelect label="Status" value={values.status} onChange={pick('status')} options={opts(['pending', 'acknowledged', 'dispatched', 'resolved', 'invalid'])} />
+            <FilterSelect label="Types" value={values.type} onChange={pick('type')} options={types.map((t) => ({ value: String(t.id), label: t.name }))} />
+            <FilterSelect label="Priority" value={values.priority} onChange={pick('priority')} options={opts(['low', 'medium', 'high', 'critical'])} />
+          </>
+        )}
         {isFiltered && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear all filters</Button>}
       </FilterBar>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <p><span className="font-semibold text-foreground">{reports.total}</span> matching {tab === 'emergency' ? 'report' : 'driver form'}{(reports.total) === 1 ? '' : 's'}</p>
+        <p>
+          <span className="font-semibold text-foreground">{tab === 'scheduled' ? (scheduledReports?.total ?? 0) : reports.total}</span>{' '}
+          matching {tab === 'scheduled' ? 'scheduled service' : tab === 'driver' ? 'driver form' : 'report'}
+          {(tab === 'scheduled' ? (scheduledReports?.total ?? 0) : reports.total) === 1 ? '' : 's'}
+        </p>
       </div>
-      {tab === 'emergency' ? (
+      {tab === 'scheduled' ? (
+        <div className="overflow-hidden rounded-lg border bg-card">
+          {scheduledRows.length === 0 ? (
+            <EmptyState title="No scheduled services match your filters" hint="Scheduled services and their linked Driver Tickets will appear here." />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Service &amp; Requester</TableHead>
+                  <TableHead className="hidden md:table-cell">Schedule</TableHead>
+                  <TableHead className="hidden lg:table-cell">Assigned Team</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Driver Ticket</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {scheduledRows.map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="font-mono text-xs">{s.reference}</TableCell>
+                    <TableCell>
+                      <p className="font-medium">{s.service_details || s.service_type}</p>
+                      <p className="text-xs text-muted-foreground">{s.resident || 'Resident'} · {s.address}</p>
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-xs text-muted-foreground tabular-nums md:table-cell">
+                      {s.preferred_date} · {s.preferred_time}
+                    </TableCell>
+                    <TableCell className="hidden text-sm lg:table-cell">{s.team_name || 'Unassigned'}</TableCell>
+                    <TableCell><StatusBadge value={s.status} /></TableCell>
+                    <TableCell>
+                      {s.has_driver_ticket ? (
+                        <span className="inline-flex h-5 items-center gap-1 rounded-sm bg-ok-soft px-1.5 text-xs font-medium text-ok">
+                          <Truck className="size-3" aria-hidden="true" />
+                          Submitted
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Pending</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button asChild variant="outline" size="sm">
+                        <Link href={route('admin.schedules.show', s.id)} aria-label={`View scheduled service ${s.reference}`}>
+                          <Eye className="size-3.5" />View
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      ) : tab === 'emergency' ? (
         <div className="overflow-hidden rounded-lg border bg-card">
           {reports.data.length === 0 ? <EmptyState title="No reports match your filters" hint="Try adjusting your search criteria." /> : (
             <Table>
@@ -217,7 +315,11 @@ export default function Index({
           )}
         </div>
       )}
-      <ServerPagination page={reports} noun={tab === 'driver' ? 'driver form' : 'report'} />
+      {tab === 'scheduled' && scheduledReports ? (
+        <ServerPagination page={scheduledReports} noun="scheduled service" />
+      ) : (
+        <ServerPagination page={reports} noun={tab === 'driver' ? 'driver form' : 'report'} />
+      )}
       <ConfirmDialog
         open={!!archiving}
         onOpenChange={(o) => !o && setArchiving(null)}

@@ -25,6 +25,12 @@ class DriverResponderUser extends User
         return $this->hasMany(TeamMember::class, 'user_id')->where('status', 'active')->whereHas('team', fn ($query) => $query->where('status', 'active'))->orderBy('id');
     }
 
+    public function hasActiveEmergencyDispatch(): bool
+    {
+        return EmergencyReport::query()->assignedToResponder($this->getKey())
+            ->whereIn('status', ['acknowledged', 'dispatched'])->exists();
+    }
+
     public static function roleName(): string
     {
         return 'driver/responder';

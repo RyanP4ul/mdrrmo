@@ -71,6 +71,55 @@ class MobileRecordsTest extends TestCase
         $this->putJson($url, $edit)->assertUnprocessable();
     }
 
+    public function test_report_creation_uses_account_details_only_for_registered_victims(): void
+    {
+        $this->travelTo(now(config('mobile.timezone'))->setDate(2026, 11, 21)->setTime(12, 0));
+        $owner = ResidentUser::factory()->accepted()->create(['date_of_birth' => '2000-11-22', 'sex' => 'Female']);
+        $type = IncidentType::create(['name' => 'Medical', 'description' => 'Medical', 'priority' => 'high', 'color' => '#223344']);
+        $payload = ['incident_type_id' => $type->id, 'location' => 'Town hall', 'lat' => 14.8, 'lng' => 120.9];
+        Sanctum::actingAs($owner, ['*']);
+
+        foreach (['victim', 'witness'] as $role) {
+            $receipt = $this->postJson('/api/resident/reports', $payload + ['reporter_type' => $role], ['Idempotency-Key' => (string) Str::uuid()])->assertCreated();
+            $report = EmergencyReport::findOrFail($receipt->json('report.id'));
+            $this->assertSame('', $report->description);
+            $this->assertSame($owner->full_name, $report->reporter_name);
+            $this->assertSame($role === 'victim' ? ['name' => $owner->full_name, 'age' => 25, 'sex' => 'Female'] : null, $report->victim_info);
+        }
+    }
+
+    public function test_service_pins_and_custom_details_survive_booking_and_are_returned_to_assigned_drivers(): void
+    {
+        $resident = ResidentUser::factory()->accepted()->create();
+        $driver = DriverResponderUser::factory()->create();
+        $payload = [
+            'service_type' => 'Others', 'service_details' => 'Rehabilitation visit',
+            'preferred_date' => now(config('mobile.timezone'))->addDays(2)->toDateString(), 'preferred_time' => '11:30',
+            'address' => 'Town hall', 'destination_address' => 'Health center',
+            'pickup_lat' => 14.8153, 'pickup_lng' => 120.9094,
+            'destination_lat' => 14.8253, 'destination_lng' => 120.9194,
+        ];
+        Sanctum::actingAs($resident, ['*']);
+        $this->postJson('/api/resident/schedules', array_diff_key($payload, ['service_details' => true, 'pickup_lng' => true]), ['Idempotency-Key' => (string) Str::uuid()])
+            ->assertUnprocessable()->assertJsonValidationErrors(['service_details', 'pickup_lng']);
+        $id = $this->postJson('/api/resident/schedules', $payload, ['Idempotency-Key' => (string) Str::uuid()])
+            ->assertCreated()->assertJsonPath('schedule.pickup_lat', 14.8153)->json('schedule.id');
+        $schedule = ServiceSchedule::findOrFail($id);
+        $schedule->responders()->attach($driver);
+
+        Sanctum::actingAs($driver, ['*']);
+        $this->getJson('/api/driver-responder/schedules/'.$id)->assertOk()
+            ->assertJsonPath('service_details', 'Rehabilitation visit')
+            ->assertJsonPath('pickup_lng', 120.9094)
+            ->assertJsonPath('destination_lat', 14.8253);
+
+        Sanctum::actingAs($resident, ['*']);
+        $url = '/api/resident/schedules/'.$id;
+        $revision = $this->getJson($url)->assertOk()->json('revision');
+        $this->putJson($url, array_replace(array_diff_key($payload, ['pickup_lat' => true, 'pickup_lng' => true]), ['address' => 'New pickup', 'revision' => $revision]))
+            ->assertOk()->assertJsonPath('pickup_lat', null)->assertJsonPath('destination_lng', 120.9194);
+    }
+
     public function test_withdrawal_preserves_the_record_and_notifies_once_without_permitting_dispatched_withdrawal(): void
     {
         $owner = ResidentUser::factory()->accepted()->create();
@@ -265,6 +314,105 @@ class MobileRecordsTest extends TestCase
         Sanctum::actingAs($driver, ['*']);
         $this->getJson('/api/driver-responder/bootstrap')->assertOk()->assertJsonCount(2, 'assignments')->assertJsonPath('teams.0.online', true)->assertJsonPath('teams.0.contact', '09171234567')->assertJsonPath('teams.1.online', false);
         $this->assertNotNull($driver->fresh()->last_seen_at);
+    }
+
+    public function test_responder_can_save_patient_care_to_an_incident_assigned_to_their_team(): void
+    {
+        $resident = ResidentUser::factory()->accepted()->create();
+        $driver = DriverResponderUser::factory()->create();
+        $responder = DriverResponderUser::factory()->create();
+        $vehicle = $this->vehicle($driver);
+        $vehicle->team->members()->create([
+            'user_id' => $responder->id, 'name' => $responder->full_name, 'role' => 'Responder', 'status' => 'active',
+        ]);
+        $assignment = ['response_team_id' => $vehicle->response_team_id, 'assigned_driver_id' => $driver->id];
+        $dispatched = $this->report($resident, $assignment + ['status' => 'dispatched']);
+        $resolved = $this->report($resident, $assignment + ['status' => 'resolved']);
+        $this->report($resident, $assignment + ['status' => 'pending']);
+        $outsideTeam = $this->report($resident, ['status' => 'dispatched']);
+        $dispatched->form()->create(['driver_section' => ['driverName' => $driver->full_name], 'emergency_section' => []]);
+
+        $list = '/api/driver-responder/assigned-reports';
+        $this->getJson($list)->assertUnauthorized();
+        Sanctum::actingAs($responder, ['driver-read', 'driver-write', 'session']);
+        $this->getJson($list.'?limit=1')->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $resolved->id)->assertJsonPath('next_before', $resolved->id);
+        $this->getJson($list.'?before='.$resolved->id)->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.reference', $dispatched->reference)->assertJsonPath('next_before', null);
+
+        $url = '/api/driver-responder/reports/'.$dispatched->id.'/patient';
+        $revision = $this->getJson($url)->assertOk()->json('revision');
+        $emergency = $this->patientData()['emergency_section'];
+        $this->putJson($url, ['revision' => $revision, 'emergency_section' => $emergency])->assertOk()
+            ->assertJsonPath('form.emergency_report_id', $dispatched->id)
+            ->assertJsonPath('form.driver_section.driverName', $driver->full_name)
+            ->assertJsonPath('form.emergency_section.patientName', 'Patient');
+        $this->putJson('/api/driver-responder/reports/'.$outsideTeam->id.'/patient', ['revision' => 'new', 'emergency_section' => $emergency])->assertForbidden();
+        $this->assertDatabaseCount('emergency_reports', 4);
+        $this->assertDatabaseCount('report_forms', 1);
+        $this->assertDatabaseHas('emergency_reports', ['id' => $dispatched->id, 'reference' => $dispatched->reference, 'status' => 'dispatched']);
+    }
+
+    public function test_emergency_form_defaults_use_scene_time_and_only_prefill_registered_victims(): void
+    {
+        $resident = ResidentUser::factory()->accepted()->create([
+            'first_name' => 'Ana', 'last_name' => 'Reyes', 'middle_initial' => null,
+            'sex' => 'Female', 'date_of_birth' => '2000-11-21',
+            'house_no' => '15', 'street' => 'Rizal St', 'barangay' => 'Poblacion', 'city' => 'Balagtas', 'province' => 'Bulacan',
+        ]);
+        $driver = DriverResponderUser::factory()->create();
+        Sanctum::actingAs($driver, ['driver-read', 'session']);
+        $common = ['status' => 'dispatched', 'assigned_driver_id' => $driver->id, 'reported_at' => '2026-11-20 16:05:00'];
+        $victim = $this->report($resident, array_merge($common, ['reporter_type' => 'victim', 'victim_info' => ['name' => 'Ana at reporting time']]));
+        $victim->trip()->create(['on_scene_at' => '2026-11-20 16:20:00', 'arrived_at' => '2026-11-20 16:50:00']);
+        $url = fn (EmergencyReport $report) => '/api/driver-responder/reports/'.$report->id.'/patient';
+
+        $this->getJson($url($victim))->assertOk()->assertJsonPath('emergency_defaults', [
+            'timeReported' => '00:05', 'timeOfArrival' => '00:20', 'date' => '2026-11-21',
+            'location' => 'Town hall', 'typeOfIncident' => 'Medical',
+            'patientName' => 'Ana at reporting time', 'age' => 26, 'sex' => 'Female', 'address' => '15 Rizal St, Poblacion, Balagtas, Bulacan',
+        ]);
+
+        foreach ([
+            ['reporter_type' => 'witness'],
+            ['reporter_type' => 'victim', 'reported_by' => null, 'reported_by_type' => null],
+            ['reporter_type' => 'witness', 'reported_by' => null, 'reported_by_type' => null],
+        ] as $attributes) {
+            $report = $this->report($resident, $common + $attributes + ['victim_info' => ['name' => 'Do not copy']]);
+            $report->trip()->create(['arrived_at' => '2026-11-20 16:50:00']);
+            $this->getJson($url($report))->assertOk()->assertJsonPath('emergency_defaults', [
+                'timeReported' => '00:05', 'timeOfArrival' => null, 'date' => '2026-11-21',
+                'location' => 'Town hall', 'typeOfIncident' => 'Medical',
+            ]);
+        }
+
+        $outsideAssignment = $this->report($resident, ['status' => 'dispatched', 'reporter_type' => 'victim']);
+        $this->getJson($url($outsideAssignment))->assertNotFound();
+    }
+
+    public function test_emergency_form_saves_without_medical_fields_and_merges_explicit_clears(): void
+    {
+        $resident = ResidentUser::factory()->accepted()->create();
+        $driver = DriverResponderUser::factory()->create();
+        $report = $this->report($resident, ['status' => 'dispatched', 'assigned_driver_id' => $driver->id]);
+        Sanctum::actingAs($driver, ['driver-read', 'driver-write', 'session']);
+        $url = '/api/driver-responder/reports/'.$report->id.'/patient';
+        $required = ['sex' => 'Female', 'typeOfIncident' => 'Medical'];
+
+        $revision = $this->putJson($url, ['revision' => 'new', 'emergency_section' => $required])
+            ->assertOk()->assertJsonPath('form.emergency_section', $required)->json('revision');
+        $revision = $this->putJson($url, ['revision' => $revision, 'emergency_section' => $required + [
+            'vitalSigns' => ['pulseRate' => '80', 'respiration' => '18'],
+            'endorsedBy' => ['name' => 'Responder', 'time' => '12:03', 'date' => '2026-11-21'],
+            'endorsedTo' => ['name' => 'Receiving staff'],
+        ]])->assertOk()->json('revision');
+
+        $this->putJson($url, ['revision' => $revision, 'emergency_section' => $required + [
+            'vitalSigns' => ['pulseRate' => null], 'endorsedBy' => ['time' => null],
+        ]])->assertOk()
+            ->assertJsonPath('form.emergency_section.vitalSigns', ['pulseRate' => null, 'respiration' => '18'])
+            ->assertJsonPath('form.emergency_section.endorsedBy', ['name' => 'Responder', 'time' => null, 'date' => '2026-11-21'])
+            ->assertJsonPath('form.emergency_section.endorsedTo.name', 'Receiving staff');
     }
 
     private function patientData(): array

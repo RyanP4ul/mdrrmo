@@ -15,6 +15,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE service_schedules DROP CONSTRAINT IF EXISTS service_schedules_status_check');
+        }
+
         Schema::table('service_schedules', function (Blueprint $table): void {
             $table->string('status', 30)->default('pending')->change();
             $table->timestamp('started_at')->nullable();
