@@ -197,7 +197,25 @@ class DashboardController extends Controller
         }
 
         $data = $request->validate([
-            'incident_type_id' => ['required', 'exists:incident_types,id'],
+            'incident_type_id' => [
+                'required_without:incident_type_name',
+                'nullable',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if ($value === null || $value === '' || $value === 'others') {
+                        return;
+                    }
+                    if (! ctype_digit((string) $value) || ! IncidentType::query()->whereKey((int) $value)->exists()) {
+                        $fail('The selected incident type is invalid.');
+                    }
+                },
+            ],
+            'incident_type_name' => [
+                'required_if:incident_type_id,others',
+                'required_without:incident_type_id',
+                'nullable',
+                'string',
+                'max:80',
+            ],
             'team_id' => ['nullable', 'integer', 'exists:response_teams,id'],
             'reporter_type' => ['required', 'in:victim,witness'],
             'reporter_name' => ['required_if:reporter_type,witness', 'nullable', 'string', 'max:120'],
@@ -211,10 +229,16 @@ class DashboardController extends Controller
             'victim_info.age' => ['nullable', 'integer', 'between:0,130'],
             'victim_info.sex' => ['nullable', 'string', 'max:20'],
             'witness_info' => ['nullable', 'array'],
+        ], [
+            'incident_type_name.required_if' => 'Please specify the incident type.',
+            'incident_type_name.required_without' => 'Please specify the incident type.',
         ]);
 
         $teamId = $data['team_id'] ?? null;
-        unset($data['team_id']);
+        $customIncidentTypeName = isset($data['incident_type_name']) && trim((string) $data['incident_type_name']) !== ''
+            ? trim((string) $data['incident_type_name'])
+            : null;
+        unset($data['team_id'], $data['incident_type_name']);
         $data['reporter_name'] = isset($data['reporter_name']) && trim($data['reporter_name']) !== ''
             ? trim($data['reporter_name'])
             : null;
@@ -223,6 +247,7 @@ class DashboardController extends Controller
             : null;
         $data['lat'] = $data['lat'] ?? 14.8153;
         $data['lng'] = $data['lng'] ?? 120.9094;
+        $data['description'] = $data['description'] ?? '';
         if (isset($data['victim_info']) && is_array($data['victim_info'])) {
             $data['victim_info'] = [
                 'name' => isset($data['victim_info']['name']) && trim((string) $data['victim_info']['name']) !== ''
@@ -236,15 +261,40 @@ class DashboardController extends Controller
                     : null,
             ];
         }
-        $priority = IncidentType::find($data['incident_type_id'])->priority; // priority comes from the incident type
 
-        $report = DB::transaction(function () use ($data, $priority, $teamId) {
-            $report = EmergencyReport::create($data + [
+        $report = DB::transaction(function () use ($data, $teamId, $customIncidentTypeName) {
+            if (! empty($data['incident_type_id']) && $data['incident_type_id'] !== 'others') {
+                $incidentType = IncidentType::query()->findOrFail((int) $data['incident_type_id']);
+            } else {
+                $name = (string) $customIncidentTypeName;
+                $incidentType = IncidentType::query()
+                    ->withTrashed()
+                    ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                    ->first();
+
+                if ($incidentType) {
+                    if ($incidentType->trashed()) {
+                        $incidentType->restoreFromArchive();
+                    }
+                } else {
+                    $incidentType = IncidentType::query()->create([
+                        'name' => $name,
+                        'description' => $name,
+                        'priority' => 'high',
+                        'color' => '#6b7280',
+                    ]);
+                }
+            }
+
+            $data['incident_type_id'] = $incidentType->getKey();
+            $priority = $incidentType->priority; // priority comes from the incident type
+
+            $report = EmergencyReport::create(array_merge($data, [
                 'reference' => EmergencyReport::generateReference(),
                 'source' => 'emergency-call',
                 'priority' => $priority,
                 'description' => $data['description'] ?? '',
-            ]);
+            ]));
 
             $selectedTeam = $teamId ? ResponseTeam::find($teamId) : null;
 

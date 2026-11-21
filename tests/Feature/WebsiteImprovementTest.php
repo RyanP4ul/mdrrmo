@@ -647,16 +647,18 @@ class WebsiteImprovementTest extends TestCase
             ])
             ->assertSessionHasErrors(['reporter_name', 'reporter_contact']);
 
-        // Victim allows blank/null caller name, contact number, victim age/sex, and omitted map pin.
+        // Victim allows blank/null caller name, contact number, description, victim age/sex, and omitted map pin.
         $this->actingAs($dispatcher, 'web')
             ->post(route('dispatcher.dispatch.store'), [
                 'incident_type_id' => $type->id,
                 'team_id' => $team->id,
                 'reporter_type' => 'victim',
-                'reporter_name' => null,
-                'reporter_contact' => null,
+                'reporter_name' => '',
+                'reporter_contact' => '',
                 'location' => 'Brgy. San Juan',
-                'victim_info' => ['name' => 'Unconscious Victim', 'age' => null, 'sex' => null],
+                'description' => '',
+                'victim_info' => ['name' => 'Unconscious Victim', 'age' => '', 'sex' => ''],
+                'witness_info' => ['statement' => ''],
             ])
             ->assertRedirect();
 
@@ -664,8 +666,60 @@ class WebsiteImprovementTest extends TestCase
         $this->assertSame('victim', $created->reporter_type);
         $this->assertNull($created->reporter_name);
         $this->assertNull($created->reporter_contact);
+        $this->assertSame('', $created->description);
         $this->assertNull($created->victim_info['age']);
         $this->assertNull($created->victim_info['sex']);
         $this->assertSame('dispatched', $created->status);
+    }
+
+    public function test_dispatcher_phone_call_supports_others_incident_type_with_custom_input(): void
+    {
+        $dispatcher = DispatcherUser::factory()->create(['status' => 'active']);
+        $driver = DriverResponderUser::factory()->create(['status' => 'active']);
+        $team = ResponseTeam::create(['team_name' => 'Bravo Team', 'status' => 'active']);
+        TeamMember::create([
+            'response_team_id' => $team->id,
+            'user_id' => $driver->id,
+            'name' => $driver->full_name,
+            'role' => 'Driver',
+            'status' => 'active',
+        ]);
+        Vehicle::create([
+            'response_team_id' => $team->id,
+            'plate_number' => 'RES-OTH1',
+            'vehicle_type' => 'rescue-truck',
+            'status' => 'available',
+        ]);
+
+        // Selecting Others without typing a custom incident type triggers validation error on incident_type_name.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'incident_type_id' => 'others',
+                'incident_type_name' => '',
+                'team_id' => $team->id,
+                'reporter_type' => 'victim',
+                'location' => 'Brgy. Wawa',
+                'description' => '',
+            ])
+            ->assertSessionHasErrors(['incident_type_name'])
+            ->assertSessionDoesntHaveErrors(['incident_type_id']);
+
+        // Selecting Others with a custom incident type creates/links it and dispatches cleanly.
+        $this->actingAs($dispatcher, 'web')
+            ->post(route('dispatcher.dispatch.store'), [
+                'incident_type_id' => 'others',
+                'incident_type_name' => 'Fallen Tree',
+                'team_id' => $team->id,
+                'reporter_type' => 'victim',
+                'location' => 'Brgy. Wawa',
+                'description' => '',
+            ])
+            ->assertRedirect();
+
+        $created = EmergencyReport::with('incidentType')->latest('id')->firstOrFail();
+        $this->assertSame('Fallen Tree', $created->incidentType->name);
+        $this->assertSame('high', $created->priority);
+        $this->assertSame('dispatched', $created->status);
+        $this->assertSame(1, IncidentType::whereRaw('LOWER(name) = ?', ['fallen tree'])->count());
     }
 }

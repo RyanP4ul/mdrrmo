@@ -176,6 +176,8 @@ function pickInitialBackupTeamId(selected: Report | null, autoTeam: TeamOption |
   return '';
 }
 
+const OTHER_INCIDENT_TYPE = 'others';
+
 function DispatchForm({
   selected,
   types,
@@ -208,6 +210,7 @@ function DispatchForm({
     report_id: selected?.id ?? '',
     team_id: initialTeamId,
     incident_type_id: selected ? String(selected.incident_type_id) : '',
+    incident_type_name: '',
     reporter_name: selected?.reporter_name ?? '',
     reporter_contact: selected?.reporter_contact ?? '',
     location: selected?.location ?? '',
@@ -223,7 +226,16 @@ function DispatchForm({
     witness_info: { statement: selected?.witness_info?.statement ? String(selected.witness_info.statement) : '' },
   });
   const e = form.errors as Record<string, string>;
-  const priority = selected?.priority ?? types.find((t) => String(t.id) === form.data.incident_type_id)?.priority;
+  const selectableTypes = useMemo(
+    () => types.filter((t) => !['other', 'others'].includes(t.name.trim().toLowerCase())),
+    [types],
+  );
+  const isOtherIncidentType = !readOnly && form.data.incident_type_id === OTHER_INCIDENT_TYPE;
+  const priority =
+    selected?.priority ??
+    (isOtherIncidentType
+      ? (types.find((t) => t.name.trim().toLowerCase() === form.data.incident_type_name.trim().toLowerCase())?.priority ?? 'high')
+      : types.find((t) => String(t.id) === form.data.incident_type_id)?.priority);
   const readOnlyClass = readOnly ? 'bg-muted/50 text-foreground cursor-default focus-visible:border-input focus-visible:ring-0' : undefined;
   const displayValue = (value: string) => (readOnly ? value.trim() || '—' : value);
   const showVictimInfo = form.data.reporter_type === 'victim' || (readOnly && Boolean(form.data.victim_info.name || form.data.victim_info.age || form.data.victim_info.sex));
@@ -298,7 +310,11 @@ function DispatchForm({
         ...(chosenVehicleId ? { vehicle_id: chosenVehicleId } : {}),
       }));
     } else {
-      form.transform((data) => ({ ...data, team_id: chosenTeamId }));
+      form.transform((data) => ({
+        ...data,
+        team_id: chosenTeamId,
+        incident_type_name: data.incident_type_id === OTHER_INCIDENT_TYPE ? data.incident_type_name : null,
+      }));
     }
     form.post(route('dispatcher.dispatch.store'), {
       preserveScroll: true,
@@ -568,9 +584,20 @@ function DispatchForm({
               {readOnly ? (
                 <Input id="it" readOnly className={readOnlyClass} value={selected.incident_type.name} />
               ) : (
-                <Select value={form.data.incident_type_id} onValueChange={(v) => form.setData('incident_type_id', v)}>
+                <Select
+                  value={form.data.incident_type_id}
+                  onValueChange={(v) => {
+                    form.setData('incident_type_id', v);
+                    if (v !== OTHER_INCIDENT_TYPE) {
+                      form.setData('incident_type_name', '');
+                    }
+                  }}
+                >
                   <SelectTrigger id="it" className="w-full"><SelectValue placeholder="Choose the type of emergency" /></SelectTrigger>
-                  <SelectContent>{types.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>)}</SelectContent>
+                  <SelectContent>
+                    {selectableTypes.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>)}
+                    <SelectItem value={OTHER_INCIDENT_TYPE}>Others</SelectItem>
+                  </SelectContent>
                 </Select>
               )}
             </Field>
@@ -578,6 +605,18 @@ function DispatchForm({
               <div className="flex h-9 items-center">{priority ? <StatusBadge value={priority} /> : <span className="text-sm text-muted-foreground">—</span>}</div>
             </Field>
           </div>
+          {isOtherIncidentType && (
+            <Field label="Specify incident type" htmlFor="incident-type-other" required error={e.incident_type_name}>
+              <Input
+                id="incident-type-other"
+                placeholder="Enter the type of emergency (e.g., Fallen tree, Gas leak)"
+                maxLength={80}
+                aria-invalid={!!e.incident_type_name}
+                value={form.data.incident_type_name}
+                onChange={(ev) => form.setData('incident_type_name', ev.target.value)}
+              />
+            </Field>
+          )}
           <Field label="Reporter is the">
             <ToggleGroup type="single" variant="outline" disabled={readOnly} aria-readonly={readOnly || undefined} value={form.data.reporter_type} onValueChange={(v) => !readOnly && v && form.setData('reporter_type', v as 'victim' | 'witness')}>
               <ToggleGroupItem value="victim" className={cn('px-4', readOnly && 'disabled:opacity-100 data-[state=off]:opacity-45 data-[state=on]:bg-muted data-[state=on]:font-semibold')}>Victim</ToggleGroupItem>
