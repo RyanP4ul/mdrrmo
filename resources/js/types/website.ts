@@ -52,6 +52,19 @@ export interface ReportForm {
     };
 }
 
+export interface DispatchVehicleOption {
+    id: number;
+    name: string;
+    plate_number: string;
+    vehicle_type: string;
+    vehicle_type_label: string | null;
+    status: 'en-route' | 'on-scene' | 'available' | 'returning' | 'offline' | 'maintenance';
+    response_team_id?: number | null;
+    team_name?: string | null;
+    assigned_report_id?: number | null;
+    is_available: boolean;
+}
+
 export interface EmergencyReport {
     id: number;
     reference: string;
@@ -76,6 +89,19 @@ export interface EmergencyReport {
     victim_info?: Record<string, unknown> | null;
     witness_info?: { statement?: string } | null;
     form?: ReportForm | null;
+    is_backup?: boolean;
+    requested_vehicle_type?: string | null;
+    requested_vehicle_label?: string | null;
+    parent_report?: { id: number; reference: string; status: string } | null;
+    requested_by_team?: { id: number; team_name: string } | null;
+    assigned_vehicle?: {
+        id: number;
+        name: string;
+        plate_number: string;
+        vehicle_type: string;
+        vehicle_type_label: string | null;
+        status: string;
+    } | null;
 }
 
 export interface VehicleSummary {

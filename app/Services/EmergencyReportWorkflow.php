@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\EmergencyReportUpdated;
+use App\Models\DispatchAssignment;
 use App\Models\DriverNotification;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
@@ -74,6 +75,14 @@ class EmergencyReportWorkflow
                         'status' => 'available',
                         'assigned_report_id' => null,
                     ]));
+
+                DispatchAssignment::query()
+                    ->where('emergency_report_id', $lockedReport->getKey())
+                    ->where('status', 'dispatched')
+                    ->update([
+                        'status' => $status === 'resolved' ? 'completed' : 'cancelled',
+                        'completed_at' => now(),
+                    ]);
             }
 
             if ($statusChanged && $lockedReport->assigned_driver_id) {

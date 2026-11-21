@@ -42,7 +42,19 @@ class MobileDriverApiController extends Controller
         $assignments = $this->activeReports($driver)->get();
         $assignment = $assignments->first();
         $teamRoles = app(TeamRoles::class)->memberships($driver);
-        $vehicles = collect($teamRoles)->flatMap(fn (array $role) => $role['vehicles'] ?? [])->unique('id')->values()->all();
+        $assignedVehicles = $assignments->isEmpty()
+            ? collect()
+            : Vehicle::query()
+                ->whereIn('assigned_report_id', $assignments->pluck('id'))
+                ->with('openMaintenanceReports')
+                ->get()
+                ->map(fn (Vehicle $v): array => $v->toTeamPayload($v->id));
+        $vehicles = collect($teamRoles)
+            ->flatMap(fn (array $role) => $role['vehicles'] ?? [])
+            ->concat($assignedVehicles)
+            ->unique('id')
+            ->values()
+            ->all();
         $activeVehicle = collect($teamRoles)->pluck('active_vehicle')->filter()->first();
 
         return response()->json([
@@ -437,6 +449,7 @@ class MobileDriverApiController extends Controller
         Gate::forUser($driver)->authorize('advanceAsDriver', $report);
 
         $data = $request->validate([
+            'requested_vehicle_type' => ['nullable', 'string', Rule::in(Vehicle::TYPES)],
             'notes' => ['nullable', 'string', 'max:500'],
         ]);
 
@@ -462,13 +475,19 @@ class MobileDriverApiController extends Controller
 
         $report->loadMissing(['incidentType', 'team']);
         $teamName = $report->team?->team_name ?? $driver->full_name;
+        $requestedVehicleType = $data['requested_vehicle_type'] ?? null;
+        $requestedVehicleLabel = Vehicle::typeLabel($requestedVehicleType);
         $notes = trim((string) ($data['notes'] ?? ''));
-        $backupDescription = "[BACKUP REQUEST for {$report->reference} by {$teamName} ({$driver->full_name})]"
+        $vehicleTag = $requestedVehicleLabel ? " - {$requestedVehicleLabel}" : '';
+        $backupDescription = "[BACKUP REQUEST{$vehicleTag} for {$report->reference} by {$teamName} ({$driver->full_name})]"
             .($notes !== '' ? " {$notes}" : '')
             .($report->description ? " — Original incident: {$report->description}" : '');
 
         $backupReport = DB::transaction(fn () => EmergencyReport::query()->create([
             'reference' => EmergencyReport::generateReference(),
+            'parent_report_id' => $report->getKey(),
+            'requested_by_team_id' => $report->response_team_id,
+            'requested_vehicle_type' => $requestedVehicleType,
             'incident_type_id' => $report->incident_type_id,
             'location' => $report->location,
             'lat' => $report->lat,
@@ -488,12 +507,14 @@ class MobileDriverApiController extends Controller
         ]));
 
         DriverNotification::receipt($driver->id, $backupReport, 'backup_requested', 'Backup request sent');
-        Audit::record('REQUEST_BACKUP', "Driver {$driver->full_name} requested on-scene backup ({$backupReport->reference}) for {$report->reference}");
+        $auditVehicle = $requestedVehicleLabel ? " ({$requestedVehicleLabel})" : '';
+        Audit::record('REQUEST_BACKUP', "Driver {$driver->full_name} requested on-scene backup{$auditVehicle} ({$backupReport->reference}) for {$report->reference}");
         $backupReport->load('incidentType:id,name,color');
         EmergencyReportUpdated::dispatch($backupReport, null, true);
 
         return response()->json([
             'reference' => $backupReport->reference,
+            'requested_vehicle_type' => $backupReport->requested_vehicle_type,
             'message' => 'Backup request sent to dispatcher.',
             'report' => $this->reportData($backupReport),
         ], 201);
@@ -516,8 +537,18 @@ class MobileDriverApiController extends Controller
 
     private function editableVehicles(DriverResponderUser $driver)
     {
-        return Vehicle::query()->whereHas('team.members', fn ($query) => $query->where('user_id', $driver->getKey()))
-            ->with(['team', 'report'])->orderBy('id')->get()->filter(fn (Vehicle $vehicle): bool => Gate::forUser($driver)->allows('update', $vehicle))->values();
+        return Vehicle::query()
+            ->where(function ($query) use ($driver): void {
+                $query->whereHas('team.members', fn ($q) => $q->where('user_id', $driver->getKey()))
+                    ->orWhereHas('report', fn ($q) => $q
+                        ->where('assigned_driver_id', $driver->getKey())
+                        ->whereIn('status', ['acknowledged', 'dispatched']));
+            })
+            ->with(['team', 'report'])
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (Vehicle $vehicle): bool => Gate::forUser($driver)->allows('update', $vehicle))
+            ->values();
     }
 
     private function vehicleFor(DriverResponderUser $driver, ?int $id = null, bool $requireChoice = false): ?Vehicle
@@ -565,8 +596,10 @@ class MobileDriverApiController extends Controller
      */
     private function reportData(EmergencyReport $report, ?Vehicle $vehicle = null): array
     {
-        $report->loadMissing(['incidentType', 'team.vehicles', 'team.members.user', 'driver', 'form']);
-        $teamVehicle = $report->team?->vehicles->firstWhere('assigned_report_id', $report->getKey())
+        $report->loadMissing(['incidentType', 'team.vehicles', 'team.members.user', 'driver', 'form', 'assignedVehicle', 'activeDispatchAssignment.vehicle']);
+        $teamVehicle = $report->assignedVehicle
+            ?? $report->activeDispatchAssignment?->vehicle
+            ?? $report->team?->vehicles->firstWhere('assigned_report_id', $report->getKey())
             ?? $report->team?->resolveActiveVehicle();
         $trip = DispatchTrip::where('emergency_report_id', $report->id)->first();
         // Match DriverResponseProgress for assignments created before trip events.
@@ -617,7 +650,11 @@ class MobileDriverApiController extends Controller
             'unavailable_hospital_ids' => $trip?->unavailable_hospital_ids ?? [],
             'vehicle_id' => $teamVehicle?->id,
             'vehicle' => $teamVehicle?->plate_number ?? $trip?->vehicle_number ?? $vehicle?->plate_number,
+            'vehicle_name' => $teamVehicle?->displayName(),
+            'vehicle_type' => $teamVehicle?->vehicle_type,
             'vehicle_status' => $teamVehicle?->status ?? $vehicle?->status,
+            'is_backup' => $report->isBackupRequest(),
+            'requested_vehicle_type' => $report->requested_vehicle_type,
         ];
     }
 }

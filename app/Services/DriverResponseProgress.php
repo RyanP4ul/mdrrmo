@@ -71,6 +71,9 @@ class DriverResponseProgress
 
             if (in_array($next, ['arrived', 'available'], true)) {
                 $tripUpdates = ['driver_name' => $driver->full_name];
+                if ($legacy && ! $trip?->vehicle_number) {
+                    $tripUpdates['vehicle_number'] = $legacy->plate_number;
+                }
                 if ($next === 'arrived' && $trip?->arrived_at === null) {
                     $tripUpdates['arrived_at'] = now();
                 }
@@ -92,6 +95,9 @@ class DriverResponseProgress
                     'returning' => 'returning_at',
                 };
                 $tripUpdates = [$field => now(), 'driver_name' => $driver->full_name];
+                if ($legacy && ! $trip?->vehicle_number) {
+                    $tripUpdates['vehicle_number'] = $legacy->plate_number;
+                }
                 if ($next === 'en-route' && $trip?->driver_acknowledged_at === null) {
                     $tripUpdates['driver_acknowledged_at'] = now();
                 }

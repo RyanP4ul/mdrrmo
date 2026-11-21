@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\EmergencyReport;
 use App\Models\IncidentType;
 use App\Models\ResponseTeam;
+use App\Models\ServiceSchedule;
+use App\Models\Vehicle;
 use App\Services\DispatchService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +21,19 @@ class DashboardController extends Controller
     public function index()
     {
         $team = $this->dispatch->autoAssignTeam();
+        $busyTeamIds = EmergencyReport::query()
+            ->whereIn('status', ['acknowledged', 'dispatched'])
+            ->whereNotNull('response_team_id')
+            ->pluck('response_team_id')
+            ->merge(
+                ServiceSchedule::query()
+                    ->whereIn('status', ['en-route', 'on-scene'])
+                    ->whereNotNull('response_team_id')
+                    ->pluck('response_team_id'),
+            )
+            ->unique()
+            ->all();
+
         $teams = ResponseTeam::query()
             ->where('status', 'active')
             ->with([
@@ -28,7 +43,7 @@ class DashboardController extends Controller
             ])
             ->orderBy('team_name')
             ->get()
-            ->map(function (ResponseTeam $t): array {
+            ->map(function (ResponseTeam $t) use ($busyTeamIds): array {
                 $onShift = $this->dispatch->onShiftMembers($t);
                 $members = ($onShift->isNotEmpty() ? $onShift : $t->members)
                     ->map(fn ($m): array => [
@@ -37,41 +52,110 @@ class DashboardController extends Controller
                         'role' => $m->role,
                     ])->values()->all();
                 $vehicle = $t->resolveActiveVehicle();
-                $vehicleLabel = $vehicle
-                    ? ($vehicle->name ?: ucfirst(str_replace('-', ' ', $vehicle->vehicle_type)).' '.$vehicle->plate_number)
-                    : null;
+                $vehicleLabel = $vehicle?->displayName();
 
                 return [
                     'id' => $t->id,
                     'name' => $t->team_name,
                     'shift_team' => $t->shift_team,
+                    'is_available' => ! in_array($t->id, $busyTeamIds, true),
                     'vehicle_name' => $vehicleLabel,
+                    'default_vehicle' => $vehicle ? [
+                        'id' => $vehicle->id,
+                        'name' => $vehicle->displayName(),
+                        'plate_number' => $vehicle->plate_number,
+                        'vehicle_type' => $vehicle->vehicle_type,
+                        'vehicle_type_label' => Vehicle::typeLabel($vehicle->vehicle_type),
+                        'status' => $vehicle->status,
+                        'is_available' => $vehicle->status === 'available' && $vehicle->assigned_report_id === null,
+                    ] : null,
                     'members' => $members,
                 ];
             })
             ->values();
 
+        $vehicles = Vehicle::query()
+            ->with('team:id,team_name')
+            ->orderByRaw("CASE WHEN status = 'available' AND assigned_report_id IS NULL THEN 0 ELSE 1 END")
+            ->orderBy('vehicle_type')
+            ->orderBy('name')
+            ->orderBy('plate_number')
+            ->get()
+            ->map(fn (Vehicle $v): array => [
+                'id' => $v->id,
+                'name' => $v->displayName(),
+                'plate_number' => $v->plate_number,
+                'vehicle_type' => $v->vehicle_type,
+                'vehicle_type_label' => Vehicle::typeLabel($v->vehicle_type),
+                'status' => $v->status,
+                'response_team_id' => $v->response_team_id,
+                'team_name' => $v->team?->team_name,
+                'assigned_report_id' => $v->assigned_report_id,
+                'is_available' => $v->status === 'available' && $v->assigned_report_id === null,
+            ])
+            ->values();
+
         $autoVehicle = $team?->resolveActiveVehicle();
-        $autoVehicleLabel = $autoVehicle
-            ? ($autoVehicle->name ?: ucfirst(str_replace('-', ' ', $autoVehicle->vehicle_type)).' '.$autoVehicle->plate_number)
-            : null;
+        $autoVehicleLabel = $autoVehicle?->displayName();
 
         return Inertia::render('Dispatcher/Dashboard', [
-            'incoming' => EmergencyReport::with(['incidentType:id,name,color', 'team:id,team_name'])->active()
+            'incoming' => EmergencyReport::with([
+                'incidentType:id,name,color',
+                'team:id,team_name',
+                'parentReport:id,reference,status',
+                'requestedByTeam:id,team_name',
+                'assignedVehicle:id,name,plate_number,vehicle_type,status,assigned_report_id',
+                'activeDispatchAssignment.vehicle:id,name,plate_number,vehicle_type,status',
+            ])->active()
                 ->orderByRaw("CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END")
                 ->orderByRaw("status = 'pending' desc")->latest('reported_at')->orderByDesc('id')->get()
-                ->map(fn (EmergencyReport $report): array => array_merge($report->toArray(), [
-                    'photo_url' => $report->photo_path ? route('dispatcher.reports.photo', $report) : null,
-                ])),
+                ->map(function (EmergencyReport $report): array {
+                    $assignedVehicle = $report->assignedVehicle ?? $report->activeDispatchAssignment?->vehicle;
+
+                    return array_merge($report->toArray(), [
+                        'photo_url' => $report->photo_path ? route('dispatcher.reports.photo', $report) : null,
+                        'is_backup' => $report->isBackupRequest(),
+                        'requested_vehicle_type' => $report->requested_vehicle_type,
+                        'requested_vehicle_label' => Vehicle::typeLabel($report->requested_vehicle_type),
+                        'parent_report' => $report->parentReport ? [
+                            'id' => $report->parentReport->id,
+                            'reference' => $report->parentReport->reference,
+                            'status' => $report->parentReport->status,
+                        ] : null,
+                        'requested_by_team' => $report->requestedByTeam ? [
+                            'id' => $report->requestedByTeam->id,
+                            'team_name' => $report->requestedByTeam->team_name,
+                        ] : null,
+                        'assigned_vehicle' => $assignedVehicle ? [
+                            'id' => $assignedVehicle->id,
+                            'name' => $assignedVehicle->displayName(),
+                            'plate_number' => $assignedVehicle->plate_number,
+                            'vehicle_type' => $assignedVehicle->vehicle_type,
+                            'vehicle_type_label' => Vehicle::typeLabel($assignedVehicle->vehicle_type),
+                            'status' => $assignedVehicle->status,
+                        ] : null,
+                    ]);
+                }),
             'counts' => EmergencyReport::selectRaw('status, count(*) c')->groupBy('status')->pluck('c', 'status'),
             'types' => IncidentType::orderBy('name')->get(['id', 'name', 'priority']),
             'autoTeam' => $team ? [
                 'id' => $team->id,
                 'name' => $team->team_name,
+                'is_available' => ! in_array($team->id, $busyTeamIds, true),
                 'vehicle_name' => $autoVehicleLabel,
+                'default_vehicle' => $autoVehicle ? [
+                    'id' => $autoVehicle->id,
+                    'name' => $autoVehicle->displayName(),
+                    'plate_number' => $autoVehicle->plate_number,
+                    'vehicle_type' => $autoVehicle->vehicle_type,
+                    'vehicle_type_label' => Vehicle::typeLabel($autoVehicle->vehicle_type),
+                    'status' => $autoVehicle->status,
+                    'is_available' => $autoVehicle->status === 'available' && $autoVehicle->assigned_report_id === null,
+                ] : null,
                 'members' => $this->dispatch->onShiftMembers($team)->map->only('id', 'name', 'role')->values(),
             ] : null,
             'teams' => $teams,
+            'vehicles' => $vehicles,
         ]);
     }
 
@@ -82,15 +166,19 @@ class DashboardController extends Controller
             $data = $request->validate([
                 'report_id' => ['required', 'integer', 'exists:emergency_reports,id'],
                 'team_id' => ['nullable', 'integer', 'exists:response_teams,id'],
+                'vehicle_id' => ['nullable', 'integer', 'exists:vehicles,id'],
             ]);
 
             $report = EmergencyReport::findOrFail($data['report_id']);
             Gate::authorize('dispatch', $report);
 
             $selectedTeam = ! empty($data['team_id']) ? ResponseTeam::find($data['team_id']) : null;
-            $report = $this->dispatch->dispatch($report, $selectedTeam);
+            $selectedVehicle = ! empty($data['vehicle_id']) ? Vehicle::find($data['vehicle_id']) : null;
+            $report = $this->dispatch->dispatch($report, $selectedTeam, null, false, $selectedVehicle);
 
-            return redirect()->route('dispatcher.reports.show', $report)->with('success', "Dispatched {$report->team->team_name}.");
+            $vehicleLabel = $selectedVehicle ? " with {$selectedVehicle->displayName()}" : '';
+
+            return redirect()->route('dispatcher.reports.show', $report)->with('success', "Dispatched {$report->team->team_name}{$vehicleLabel}.");
         }
 
         $data = $request->validate([

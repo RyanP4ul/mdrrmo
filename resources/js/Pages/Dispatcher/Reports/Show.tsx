@@ -13,19 +13,21 @@ import {
   PhoneCall,
   Radio,
   Smartphone,
+  Truck,
   UserCheck,
   Users,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppLayout from '@/Layouts/AppLayout';
 import { DispatchReportRealtime, type ReportUpdatedEvent } from '@/components/DispatchReportRealtime';
 import { StatusBadge } from '@/components/StatusBadge';
 import { GoogleLocationMap } from '@/components/maps/GoogleLocationMap';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn, formatDateTime } from '@/lib/utils';
-import type { DispatchTeam, EmergencyReport, HospitalRecommendation } from '@/types/website';
+import type { DispatchTeam, DispatchVehicleOption, EmergencyReport, HospitalRecommendation } from '@/types/website';
 
 const Row = ({ k, v, always = false }: { k: string; v?: string | number | null; always?: boolean }) => {
   const display = v !== null && v !== undefined && String(v).trim() !== '' ? String(v) : null;
@@ -47,22 +49,60 @@ export default function Show({
   report: r,
   team,
   teams,
+  vehicles = [],
   hospitals,
   googleMapsApiKey,
 }: {
   report: EmergencyReport;
   team: DispatchTeam | null;
-  teams: { id: number; team_name: string }[];
+  teams: {
+    id: number;
+    team_name: string;
+    default_vehicle?: {
+      id: number;
+      name: string;
+      plate_number: string;
+      vehicle_type: string;
+      vehicle_type_label: string | null;
+      status: string;
+      is_available: boolean;
+    } | null;
+  }[];
+  vehicles?: DispatchVehicleOption[];
   hospitals: HospitalRecommendation[];
   googleMapsApiKey?: string | null;
 }) {
   const [teamId, setTeamId] = useState<string>(String(team?.id ?? ''));
+  const [vehicleId, setVehicleId] = useState<string>(() => {
+    if (r.assigned_vehicle?.id) return String(r.assigned_vehicle.id);
+    if (!r.is_backup) return '';
+    if (r.requested_vehicle_type) {
+      const match = vehicles.find(
+        (v) => v.vehicle_type === r.requested_vehicle_type && (v.is_available || v.assigned_report_id === r.id),
+      );
+      if (match) return String(match.id);
+    }
+    return '';
+  });
   const [route_, setRoute] = useState<number | null>(hospitals[0]?.id ?? null);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setTeamId(String(team?.id ?? ''));
   }, [team?.id]);
+
+  const selectableVehicles = useMemo(
+    () => vehicles.filter((v) => v.is_available || v.assigned_report_id === r.id),
+    [vehicles, r.id],
+  );
+  const selectedTeamMeta = useMemo(
+    () => teams.find((t) => String(t.id) === teamId) ?? null,
+    [teams, teamId],
+  );
+  const selectedVehicleMeta = useMemo(
+    () => vehicles.find((v) => String(v.id) === vehicleId) ?? null,
+    [vehicles, vehicleId],
+  );
 
   useEffect(
     () => () => {
@@ -76,7 +116,7 @@ export default function Show({
       if (event.id !== r.id || reloadTimer.current) return;
       reloadTimer.current = setTimeout(() => {
         reloadTimer.current = null;
-        router.reload({ only: ['report', 'team', 'hospitals'] });
+        router.reload({ only: ['report', 'team', 'vehicles', 'hospitals'] });
       }, 250);
     },
     [r.id],
@@ -106,15 +146,18 @@ export default function Show({
   );
 
   const { errors = {} } = usePage<{ errors?: Record<string, string> }>().props;
-  const dispatchError = errors.team ?? errors.team_id ?? errors.status ?? null;
+  const dispatchError = errors.vehicle_id ?? errors.team ?? errors.team_id ?? errors.status ?? null;
   const dispatchSelectedTeam = () =>
     router.post(
       route('dispatcher.reports.assign', r.id),
-      { team_id: teamId },
+      {
+        team_id: teamId,
+        ...(r.is_backup && vehicleId ? { vehicle_id: Number(vehicleId) } : {}),
+      },
       {
         preserveScroll: true,
         onError: (err) => {
-          const message = err.team ?? err.team_id ?? err.status;
+          const message = err.vehicle_id ?? err.team ?? err.team_id ?? err.status;
           if (message) toast.error(message);
         },
       },
@@ -141,6 +184,11 @@ export default function Show({
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge value={r.priority} />
               <StatusBadge value={r.status} />
+              {r.is_backup && (
+                <Badge variant="outline" className="border-primary/40 bg-primary/10 text-xs font-medium text-primary">
+                  Backup{r.requested_vehicle_label ? ` · ${r.requested_vehicle_label}` : ''}
+                </Badge>
+              )}
               <span className="inline-flex h-5 items-center gap-1 rounded-sm border bg-muted/50 px-2 font-mono text-xs font-medium text-foreground">
                 {r.reference}
               </span>
@@ -192,6 +240,12 @@ export default function Show({
               {r.team?.team_name ?? (team ? `${team.name} (suggested)` : 'Unassigned')}
             </dd>
             {driverFullName && <dd className="text-xs text-muted-foreground">Driver: {driverFullName}</dd>}
+            {r.assigned_vehicle && (
+              <dd className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-primary">
+                <Truck className="size-3" aria-hidden="true" />
+                {r.assigned_vehicle.name} ({r.assigned_vehicle.plate_number})
+              </dd>
+            )}
           </div>
           <div className="rounded-md border bg-muted/30 px-3 py-2">
             <dt className="eyebrow">Acknowledged / Resolved</dt>
@@ -383,9 +437,33 @@ export default function Show({
                     </Select>
                     <Button type="button" onClick={dispatchSelectedTeam} className="shrink-0">
                       <Radio aria-hidden="true" />
-                      {team?.assigned ? 'Re-assign' : 'Dispatch'}
+                      {team?.assigned ? 'Re-assign' : r.is_backup ? 'Dispatch Backup' : 'Dispatch'}
                     </Button>
                   </div>
+                  {r.is_backup && selectableVehicles.length > 0 && (
+                    <div className="space-y-1.5 rounded-md border bg-muted/20 p-3">
+                      <p className="eyebrow">Vehicle to use for this backup</p>
+                      <Select value={vehicleId} onValueChange={setVehicleId}>
+                        <SelectTrigger aria-label="Backup vehicle" className="w-full">
+                          <SelectValue placeholder="Choose available vehicle" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {selectableVehicles.map((v) => (
+                            <SelectItem key={v.id} value={String(v.id)}>
+                              {v.name} ({v.vehicle_type_label ?? v.vehicle_type}) · {v.plate_number}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {selectedTeamMeta?.default_vehicle &&
+                        selectedVehicleMeta &&
+                        selectedTeamMeta.default_vehicle.id !== selectedVehicleMeta.id && (
+                          <p className="text-xs text-muted-foreground">
+                            {selectedTeamMeta.default_vehicle.name} will remain at the station. This change is temporary.
+                          </p>
+                        )}
+                    </div>
+                  )}
                   {dispatchError && (
                     <p role="alert" className="rounded-md border border-critical/30 bg-critical-soft px-3 py-2 text-xs font-medium text-critical">
                       {dispatchError}

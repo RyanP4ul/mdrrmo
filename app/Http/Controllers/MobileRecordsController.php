@@ -51,11 +51,14 @@ class MobileRecordsController extends Controller
 
     private function reportData(Request $request, EmergencyReport $report): array
     {
-        $report->load(['incidentType', 'driver', 'team.vehicles', 'team.members.user', 'form']);
+        $report->load(['incidentType', 'driver', 'team.vehicles', 'team.members.user', 'form', 'assignedVehicle', 'activeDispatchAssignment.vehicle']);
         $canCare = $request->user()->hasRole('driver/responder') && Gate::allows('updateAsDriver', $report);
         $canEditTrip = $request->user()->hasRole('driver/responder') && Gate::allows('editTripAsDriver', $report);
         $trip = DispatchTrip::where('emergency_report_id', $report->id)->first();
         $authorizedPassenger = $this->resolveAuthorizedPassenger($report);
+        $assignedVehicle = $report->assignedVehicle
+            ?? $report->activeDispatchAssignment?->vehicle
+            ?? $report->team?->vehicles->firstWhere('assigned_report_id', $report->id);
 
         return [
             'id' => $report->id, 'reference' => $report->reference,
@@ -66,7 +69,7 @@ class MobileRecordsController extends Controller
             'reporter_type' => $report->reporter_type,
             'submitted_patient' => $request->user()->hasRole('driver/responder') ? $report->victim_info : null,
             'driver' => $report->driver?->full_name, 'team' => $report->team?->team_name,
-            'vehicle' => $report->team?->vehicles->firstWhere('assigned_report_id', $report->id)?->plate_number ?? $trip?->vehicle_number,
+            'vehicle' => $assignedVehicle?->plate_number ?? $trip?->vehicle_number,
             'authorized_passenger' => $request->user()->hasRole('driver/responder') ? $authorizedPassenger : null,
             'driver_form' => $canCare ? ($report->form?->driver_section ?: null) : null,
             'reported_at' => $report->reported_at?->toIso8601String(),
@@ -382,8 +385,10 @@ class MobileRecordsController extends Controller
     public function patient(Request $request, EmergencyReport $report): JsonResponse
     {
         abort_unless(Gate::allows('updateAsDriver', $report), 404);
-        $report->loadMissing(['incidentType', 'driver', 'team.vehicles', 'team.members.user', 'trip', 'form']);
-        $teamVehicle = $report->team?->vehicles->firstWhere('assigned_report_id', $report->id)
+        $report->loadMissing(['incidentType', 'driver', 'team.vehicles', 'team.members.user', 'trip', 'form', 'assignedVehicle', 'activeDispatchAssignment.vehicle']);
+        $teamVehicle = $report->assignedVehicle
+            ?? $report->activeDispatchAssignment?->vehicle
+            ?? $report->team?->vehicles->firstWhere('assigned_report_id', $report->id)
             ?? $report->team?->resolveActiveVehicle();
 
         return response()->json([

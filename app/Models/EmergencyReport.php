@@ -6,6 +6,7 @@ use App\Models\Concerns\Archivable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Str;
@@ -43,6 +44,64 @@ class EmergencyReport extends Model
     public function team(): BelongsTo
     {
         return $this->belongsTo(ResponseTeam::class, 'response_team_id')->withTrashed();
+    }
+
+    public function parentReport(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'parent_report_id')->withTrashed();
+    }
+
+    public function backupReports(): HasMany
+    {
+        return $this->hasMany(self::class, 'parent_report_id');
+    }
+
+    public function requestedByTeam(): BelongsTo
+    {
+        return $this->belongsTo(ResponseTeam::class, 'requested_by_team_id')->withTrashed();
+    }
+
+    public function dispatchAssignments(): HasMany
+    {
+        return $this->hasMany(DispatchAssignment::class);
+    }
+
+    public function activeDispatchAssignment(): HasOne
+    {
+        return $this->hasOne(DispatchAssignment::class)
+            ->where('status', 'dispatched')
+            ->latestOfMany();
+    }
+
+    public function assignedVehicle(): HasOne
+    {
+        return $this->hasOne(Vehicle::class, 'assigned_report_id');
+    }
+
+    public function isBackupRequest(): bool
+    {
+        return $this->parent_report_id !== null
+            || $this->requested_vehicle_type !== null
+            || str_starts_with((string) $this->description, '[BACKUP REQUEST');
+    }
+
+    public function resolvedVehicle(): ?Vehicle
+    {
+        $assigned = $this->relationLoaded('assignedVehicle')
+            ? $this->assignedVehicle
+            : $this->assignedVehicle()->first();
+        if ($assigned) {
+            return $assigned;
+        }
+
+        $activeAssignment = $this->relationLoaded('activeDispatchAssignment')
+            ? $this->activeDispatchAssignment
+            : $this->activeDispatchAssignment()->with('vehicle')->first();
+        if ($activeAssignment?->vehicle) {
+            return $activeAssignment->vehicle;
+        }
+
+        return $this->team?->resolveActiveVehicle();
     }
 
     public function reporter(): MorphTo

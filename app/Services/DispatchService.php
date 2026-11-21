@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Events\EmergencyReportUpdated;
+use App\Events\VehicleLocationUpdated;
 use App\Models\AuditLog;
+use App\Models\DispatchAssignment;
 use App\Models\DriverNotification;
 use App\Models\DriverResponderUser;
 use App\Models\EmergencyReport;
@@ -13,6 +15,7 @@ use App\Models\ResidentUser;
 use App\Models\ResponseTeam;
 use App\Models\ServiceSchedule;
 use App\Models\TeamMember;
+use App\Models\Vehicle;
 use App\Support\Audit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -83,9 +86,14 @@ class DispatchService
         return $shift ? $shift->members : collect();
     }
 
-    public function dispatch(EmergencyReport $report, ?ResponseTeam $team = null, ?TeamMember $selectedDriver = null, bool $automatic = false): EmergencyReport
-    {
-        return DB::transaction(function () use ($report, $team, $selectedDriver, $automatic): EmergencyReport {
+    public function dispatch(
+        EmergencyReport $report,
+        ?ResponseTeam $team = null,
+        ?TeamMember $selectedDriver = null,
+        bool $automatic = false,
+        ?Vehicle $selectedVehicle = null,
+    ): EmergencyReport {
+        return DB::transaction(function () use ($report, $team, $selectedDriver, $automatic, $selectedVehicle): EmergencyReport {
             $lockedReport = EmergencyReport::query()->lockForUpdate()->findOrFail($report->getKey());
 
             if (! in_array($lockedReport->status, ['pending', 'acknowledged', 'dispatched'], true)) {
@@ -93,6 +101,8 @@ class DispatchService
                     'status' => 'Only active reports can be dispatched.',
                 ]);
             }
+
+            $isBackup = $lockedReport->isBackupRequest();
 
             $team = $team
                 ? ResponseTeam::query()->where('status', 'active')->lockForUpdate()->find($team->getKey())
@@ -123,16 +133,70 @@ class DispatchService
                 ]);
             }
 
-            if (! $team->vehicles()->exists()) {
-                throw ValidationException::withMessages([
-                    'team' => "{$team->team_name} needs an assigned vehicle first before it can be dispatched.",
-                ]);
+            $operationVehicle = null;
+            if ($selectedVehicle !== null) {
+                $operationVehicle = Vehicle::query()->lockForUpdate()->find($selectedVehicle->getKey());
+                if (! $operationVehicle) {
+                    throw ValidationException::withMessages([
+                        'vehicle_id' => 'The selected vehicle could not be found.',
+                    ]);
+                }
+                if ($operationVehicle->status === 'maintenance') {
+                    throw ValidationException::withMessages([
+                        'vehicle_id' => "{$operationVehicle->displayName()} is currently under maintenance and cannot be dispatched.",
+                    ]);
+                }
+                $assignedElsewhere = $operationVehicle->assigned_report_id !== null
+                    && $operationVehicle->assigned_report_id !== $lockedReport->getKey();
+                if ($assignedElsewhere || ($operationVehicle->status !== 'available' && $operationVehicle->assigned_report_id !== $lockedReport->getKey())) {
+                    throw ValidationException::withMessages([
+                        'vehicle_id' => "{$operationVehicle->displayName()} is not currently available for dispatch.",
+                    ]);
+                }
+            } elseif ($isBackup && $lockedReport->requested_vehicle_type !== null) {
+                $teamDefault = $team->resolveActiveVehicle();
+                if (
+                    $teamDefault
+                    && $teamDefault->vehicle_type === $lockedReport->requested_vehicle_type
+                    && $teamDefault->status === 'available'
+                    && ($teamDefault->assigned_report_id === null || $teamDefault->assigned_report_id === $lockedReport->getKey())
+                ) {
+                    $operationVehicle = Vehicle::query()->lockForUpdate()->find($teamDefault->getKey());
+                } else {
+                    $operationVehicle = Vehicle::query()
+                        ->where('vehicle_type', $lockedReport->requested_vehicle_type)
+                        ->where('status', 'available')
+                        ->where(fn ($q) => $q->whereNull('assigned_report_id')->orWhere('assigned_report_id', $lockedReport->getKey()))
+                        ->orderByRaw('CASE WHEN response_team_id = ? THEN 0 WHEN response_team_id IS NULL THEN 1 ELSE 2 END', [$team->getKey()])
+                        ->orderBy('id')
+                        ->lockForUpdate()
+                        ->first();
+                }
             }
 
-            if (! $team->vehicles()->where('status', '!=', 'maintenance')->exists()) {
-                throw ValidationException::withMessages([
-                    'team' => 'All vehicles assigned to this team are currently under maintenance.',
-                ]);
+            if ($operationVehicle === null) {
+                if (! $team->vehicles()->exists()) {
+                    throw ValidationException::withMessages([
+                        'team' => "{$team->team_name} needs an assigned vehicle first before it can be dispatched.",
+                    ]);
+                }
+
+                if (! $team->vehicles()->where('status', '!=', 'maintenance')->exists()) {
+                    throw ValidationException::withMessages([
+                        'team' => 'All vehicles assigned to this team are currently under maintenance.',
+                    ]);
+                }
+
+                if ($isBackup) {
+                    $fallbackVehicle = $team->resolveActiveVehicle();
+                    if (
+                        $fallbackVehicle
+                        && $fallbackVehicle->status === 'available'
+                        && ($fallbackVehicle->assigned_report_id === null || $fallbackVehicle->assigned_report_id === $lockedReport->getKey())
+                    ) {
+                        $operationVehicle = Vehicle::query()->lockForUpdate()->find($fallbackVehicle->getKey());
+                    }
+                }
             }
 
             $driver = $this->onShiftMembers($team)->first(
@@ -176,8 +240,47 @@ class DispatchService
                 'acknowledged_at' => $lockedReport->acknowledged_at ?? now(),
             ]);
 
+            $shouldBindVehicle = $operationVehicle !== null && ($selectedVehicle !== null || $isBackup);
+            if ($shouldBindVehicle) {
+                Vehicle::query()
+                    ->where('assigned_report_id', $lockedReport->getKey())
+                    ->where('id', '!=', $operationVehicle->getKey())
+                    ->lockForUpdate()
+                    ->get()
+                    ->each(function (Vehicle $previous): void {
+                        $previous->update([
+                            'status' => 'available',
+                            'assigned_report_id' => null,
+                        ]);
+                        VehicleLocationUpdated::dispatch($previous);
+                    });
+
+                $operationVehicle->update([
+                    'assigned_report_id' => $lockedReport->getKey(),
+                ]);
+                VehicleLocationUpdated::dispatch($operationVehicle);
+            }
+
+            DispatchAssignment::query()
+                ->where('emergency_report_id', $lockedReport->getKey())
+                ->where('status', 'dispatched')
+                ->update([
+                    'status' => 'cancelled',
+                    'completed_at' => now(),
+                ]);
+
+            $recordedVehicle = $operationVehicle ?? $team->resolveActiveVehicle();
+            DispatchAssignment::query()->create([
+                'emergency_report_id' => $lockedReport->getKey(),
+                'response_team_id' => $team->getKey(),
+                'vehicle_id' => $recordedVehicle?->getKey(),
+                'assignment_type' => $isBackup ? 'backup' : 'primary',
+                'status' => 'dispatched',
+                'dispatched_at' => now(),
+            ]);
+
             if ($lockedReport->assigned_driver_id) {
-                DriverNotification::receipt($lockedReport->assigned_driver_id, $lockedReport, 'assigned', 'Assignment received');
+                DriverNotification::receipt($lockedReport->assigned_driver_id, $lockedReport, 'assigned', $isBackup ? 'Backup assignment received' : 'Assignment received');
             }
             if ($lockedReport->reporter instanceof ResidentUser) {
                 ResidentNotification::create([
@@ -190,10 +293,11 @@ class DispatchService
                 ]);
             }
 
+            $vehicleNote = $shouldBindVehicle ? " using {$operationVehicle->displayName()}" : '';
             if ($automatic) {
-                AuditLog::create(['user_id' => null, 'user_type' => null, 'user_name' => 'System', 'action' => 'AUTO_ASSIGN_TEAM', 'details' => 'Automatically dispatched '.$lockedReport->reference.' to '.$team->team_name]);
+                AuditLog::create(['user_id' => null, 'user_type' => null, 'user_name' => 'System', 'action' => 'AUTO_ASSIGN_TEAM', 'details' => 'Automatically dispatched '.$lockedReport->reference.' to '.$team->team_name.$vehicleNote]);
             } else {
-                Audit::record('ASSIGN_TEAM', "Report {$lockedReport->reference} dispatched to {$team->team_name}");
+                Audit::record('ASSIGN_TEAM', "Report {$lockedReport->reference} dispatched to {$team->team_name}{$vehicleNote}");
             }
             EmergencyReportUpdated::dispatch($lockedReport, $previousDriverId);
 

@@ -14,9 +14,19 @@ class VehiclePolicy
             return true;
         }
 
-        return $user->hasRole('driver/responder') && $user->status === 'active'
-            && $vehicle->team?->status === 'active'
-            && $vehicle->status !== 'maintenance'
+        if (! $user->hasRole('driver/responder') || $user->status !== 'active' || $vehicle->status === 'maintenance') {
+            return false;
+        }
+
+        $assignedToDriver = $vehicle->assigned_report_id !== null
+            && $vehicle->report?->assigned_driver_id === $user->getKey()
+            && in_array($vehicle->report?->status, ['acknowledged', 'dispatched'], true);
+
+        if ($assignedToDriver) {
+            return true;
+        }
+
+        return $vehicle->team?->status === 'active'
             && $vehicle->team->members()->where('user_id', $user->getKey())->where('status', 'active')
                 ->whereIn('role', $vehicle->team->member_roles_enabled ? ['Driver', 'driver'] : ['Driver', 'driver', 'Driver/Responder', 'driver/responder'])->exists()
             && ($vehicle->assigned_report_id === null || $vehicle->report?->assigned_driver_id === $user->getKey());

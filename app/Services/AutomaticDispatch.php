@@ -16,7 +16,10 @@ class AutomaticDispatch
             return 0;
         }
         $ids = EmergencyReport::leftJoin('automatic_dispatch_attempts', 'automatic_dispatch_attempts.emergency_report_id', '=', 'emergency_reports.id')
-            ->where('emergency_reports.status', 'pending')->whereNull('emergency_reports.withdrawn_at')
+            ->where('emergency_reports.status', 'pending')
+            ->whereNull('emergency_reports.withdrawn_at')
+            ->whereNull('emergency_reports.parent_report_id')
+            ->whereNull('emergency_reports.requested_vehicle_type')
             ->orderByRaw('case when automatic_dispatch_attempts.attempted_at is null then 0 else 1 end')
             ->orderBy('automatic_dispatch_attempts.attempted_at')
             ->orderByRaw("case priority when 'critical' then 0 when 'high' then 1 when 'medium' then 2 else 3 end")
@@ -39,7 +42,7 @@ class AutomaticDispatch
                 return false;
             }
             $report = EmergencyReport::whereKey($id)->lockForUpdate()->first();
-            if (! $report || $report->status !== 'pending' || $report->withdrawn_at) {
+            if (! $report || $report->status !== 'pending' || $report->withdrawn_at || $report->isBackupRequest()) {
                 return false;
             }
             $report->load('incidentType');

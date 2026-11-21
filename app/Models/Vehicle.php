@@ -14,7 +14,33 @@ class Vehicle extends Model
 
     public const TYPES = ['rescue-truck', 'ambulance', 'tow-truck'];
 
+    public const TYPE_LABELS = [
+        'ambulance' => 'Ambulance',
+        'rescue-truck' => 'Rescue Truck',
+        'tow-truck' => 'Tow Truck',
+    ];
+
     public const STATUSES = ['en-route', 'on-scene', 'available', 'returning', 'offline', 'maintenance'];
+
+    public static function typeLabel(?string $type): ?string
+    {
+        if (! $type) {
+            return null;
+        }
+
+        return self::TYPE_LABELS[$type] ?? ucwords(str_replace('-', ' ', $type));
+    }
+
+    public function displayName(): string
+    {
+        if ($this->name && trim($this->name) !== '') {
+            return trim($this->name);
+        }
+
+        $type = self::typeLabel($this->vehicle_type) ?? 'Vehicle';
+
+        return trim($type.' '.$this->plate_number);
+    }
 
     protected $guarded = ['id'];
 
